@@ -5,8 +5,6 @@ from typing import Any, Dict
 
 LOGGER = logging.getLogger(__name__)
 
-# Legacy single-file config
-LEGACY_CONFIG_PATH = Path("models.json")
 # Legacy directory-based configs
 LEGACY_MODELS_DIR = Path("models")
 
@@ -18,7 +16,6 @@ def load_configs() -> Dict[str, Dict]:
     1. user_data/models/ (highest priority)
     2. builtin_data/models/
     3. models/ (legacy, for backwards compatibility)
-    4. models.json (legacy fallback)
     """
     from data_paths import iter_files, MODELS_DIR
     
@@ -59,18 +56,6 @@ def load_configs() -> Dict[str, Dict]:
                     seen_keys.add(config_key)
             except Exception as exc:
                 LOGGER.warning("Failed to load model config from %s: %s", config_file.name, exc)
-
-    # Fallback to legacy models.json if still empty
-    if not configs and LEGACY_CONFIG_PATH.exists():
-        try:
-            legacy_configs = json.loads(LEGACY_CONFIG_PATH.read_text(encoding="utf-8"))
-            for model_id, config_data in legacy_configs.items():
-                if "model" not in config_data:
-                    config_data["model"] = model_id
-                configs[model_id] = config_data
-            LOGGER.info("Loaded %d models from legacy models.json", len(configs))
-        except Exception as exc:
-            LOGGER.warning("Failed to load legacy models.json: %s", exc)
 
     LOGGER.info("Loaded %d model configurations", len(configs))
     return configs

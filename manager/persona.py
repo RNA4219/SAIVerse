@@ -17,7 +17,7 @@ from database.models import (
     User,
     UserAiLink,
 )
-from persona_core import PersonaCore
+from persona.core import PersonaCore
 from model_configs import get_context_length, get_model_provider
 
 
@@ -131,7 +131,7 @@ class PersonaMixin:
                     avatar_image=db_ai.AVATAR_IMAGE,
                     buildings=self.buildings,
                     common_prompt_path=common_prompt_file,
-                    action_priority_path=Path("action_priority.json"),
+                    action_priority_path=Path("builtin_data/action_priority.json"),
                     building_histories=self.building_histories,
                     occupants=self.occupants,
                     id_to_name_map=self.id_to_name_map,
@@ -330,7 +330,7 @@ class PersonaMixin:
                 avatar_image=None,
                 buildings=self.buildings,
                 common_prompt_path=common_prompt_file,
-                action_priority_path=Path("action_priority.json"),
+                action_priority_path=Path("builtin_data/action_priority.json"),
                 building_histories=self.building_histories,
                 occupants=self.occupants,
                 id_to_name_map=self.id_to_name_map,

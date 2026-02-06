@@ -19,7 +19,7 @@ from google.genai import errors
 from buildings import Building
 from sea import SEARuntime
 from sea.pulse_controller import PulseController
-from persona_core import PersonaCore
+from persona.core import PersonaCore
 from model_configs import get_model_provider, get_context_length
 from occupancy_manager import OccupancyManager
 from conversation_manager import ConversationManager
