@@ -354,7 +354,8 @@ def _store_uploaded_attachment(base64_data: str) -> Optional[Dict[str, str]]:
 # File type detection constants
 TEXT_EXTENSIONS = {'txt', 'md', 'py', 'js', 'ts', 'tsx', 'json', 'yaml', 'yml', 'csv',
                    'html', 'css', 'xml', 'log', 'sh', 'bat', 'sql', 'java', 'c', 'cpp',
-                   'h', 'hpp', 'go', 'rs', 'rb', 'swift', 'kt', 'scala', 'r', 'lua', 'pl'}
+                   'h', 'hpp', 'go', 'rs', 'rb', 'swift', 'kt', 'scala', 'r', 'lua', 'pl',
+                   'pdf'}
 IMAGE_EXTENSIONS = {'png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'}
 
 def _store_image_attachment(
@@ -415,10 +416,21 @@ def _store_document_attachment(
     dest_path.write_bytes(data)
 
     # Read content for summary
-    try:
-        content = data.decode('utf-8')
-    except UnicodeDecodeError:
-        content = data.decode('utf-8', errors='replace')
+    is_pdf = att.filename.lower().endswith('.pdf') or att.mime_type == 'application/pdf'
+    if is_pdf:
+        try:
+            import fitz  # PyMuPDF
+            doc = fitz.open(stream=data, filetype="pdf")
+            text_parts = [page.get_text() for page in doc[:5]]  # first 5 pages for summary
+            content = "\n".join(text_parts)
+            doc.close()
+        except Exception:
+            content = "(PDF text extraction failed)"
+    else:
+        try:
+            content = data.decode('utf-8')
+        except UnicodeDecodeError:
+            content = data.decode('utf-8', errors='replace')
 
     # Generate summary (first 200 chars)
     summary = content[:200].strip()

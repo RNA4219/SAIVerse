@@ -602,3 +602,59 @@ def has_overlapping_entries(
     )
     row = cur.fetchone()
     return row[0] > 0 if row else False
+
+
+def search_entries(
+    conn: sqlite3.Connection,
+    query: Optional[str] = None,
+    *,
+    start_time: Optional[int] = None,
+    end_time: Optional[int] = None,
+    level: Optional[int] = None,
+    limit: int = 10,
+) -> List[ArasujiEntry]:
+    """Search arasuji entries by keyword (LIKE) and/or time range and level.
+
+    Args:
+        conn: Database connection
+        query: Keyword to search in content (LIKE match). None to skip.
+        start_time: Filter entries overlapping with this start time.
+        end_time: Filter entries overlapping with this end time.
+        level: Filter by specific level. None for all levels.
+        limit: Maximum results to return.
+
+    Returns:
+        List of matching ArasujiEntry, newest first.
+    """
+    conditions = []
+    params: List[Any] = []
+
+    if query:
+        conditions.append("content LIKE ?")
+        params.append(f"%{query}%")
+
+    if start_time is not None:
+        conditions.append("end_time >= ?")
+        params.append(start_time)
+
+    if end_time is not None:
+        conditions.append("start_time <= ?")
+        params.append(end_time)
+
+    if level is not None:
+        conditions.append("level = ?")
+        params.append(level)
+
+    where_clause = " AND ".join(conditions) if conditions else "1=1"
+    sql = f"""
+        SELECT id, level, content, source_ids_json, start_time, end_time,
+               source_count, message_count, parent_id, is_consolidated, created_at
+        FROM arasuji_entries
+        WHERE {where_clause}
+        ORDER BY end_time DESC
+        LIMIT ?
+    """
+    params.append(limit)
+
+    cur = conn.execute(sql, params)
+    return [_row_to_entry(row) for row in cur.fetchall()]

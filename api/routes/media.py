@@ -61,8 +61,9 @@ async def upload_document(file: UploadFile = File(...)):
     """
     # Accept text files
     content_type = file.content_type or ""
-    if not content_type.startswith("text/") and content_type not in ["application/json", "application/xml"]:
-        raise HTTPException(status_code=400, detail="File must be a text document")
+    accepted_types = {"application/json", "application/xml", "application/pdf"}
+    if not content_type.startswith("text/") and content_type not in accepted_types:
+        raise HTTPException(status_code=400, detail="File must be a text document or PDF")
 
     try:
         content = await file.read()
@@ -105,10 +106,10 @@ async def upload_file(file: UploadFile = File(...)):
     
     if content_type.startswith("image/"):
         return await upload_image(file)
-    elif content_type.startswith("text/") or content_type in ["application/json", "application/xml"]:
+    elif content_type.startswith("text/") or content_type in ["application/json", "application/xml", "application/pdf"]:
         return await upload_document(file)
     else:
-        raise HTTPException(status_code=400, detail=f"Unsupported file type: {content_type}. Must be image or text.")
+        raise HTTPException(status_code=400, detail=f"Unsupported file type: {content_type}. Must be image, text, or PDF.")
 
 @router.get("/images/{filename}")
 async def serve_image(filename: str):

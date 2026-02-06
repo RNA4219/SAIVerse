@@ -598,6 +598,52 @@ def search_pages(conn: sqlite3.Connection, query: str, limit: int = 10) -> List[
     return [_row_to_page(row) for row in cur.fetchall()]
 
 
+def search_pages_filtered(
+    conn: sqlite3.Connection,
+    query: str,
+    *,
+    category: Optional[str] = None,
+    limit: int = 10,
+) -> List[MemopediaPage]:
+    """Search non-deleted pages by title/content with optional category filter.
+
+    Args:
+        conn: Database connection
+        query: Search keyword (LIKE match on title, summary, content)
+        category: Optional category filter ("people", "terms", "plans")
+        limit: Maximum results
+
+    Returns:
+        List of matching MemopediaPage, newest first.
+    """
+    pattern = f"%{query}%"
+    conditions = [
+        "(title LIKE ? OR summary LIKE ? OR content LIKE ?)",
+        "(is_deleted = 0 OR is_deleted IS NULL)",
+    ]
+    params: list = [pattern, pattern, pattern]
+
+    if category:
+        conditions.append("category = ?")
+        params.append(category)
+
+    where_clause = " AND ".join(conditions)
+    params.append(limit)
+
+    cur = conn.execute(
+        f"""
+        SELECT id, parent_id, title, summary, content, category, created_at, updated_at,
+               keywords, vividness, is_trunk, is_important, last_referenced_at
+        FROM memopedia_pages
+        WHERE {where_clause}
+        ORDER BY updated_at DESC
+        LIMIT ?
+        """,
+        params,
+    )
+    return [_row_to_page(row) for row in cur.fetchall()]
+
+
 # ----- Edit history operations -----
 
 
