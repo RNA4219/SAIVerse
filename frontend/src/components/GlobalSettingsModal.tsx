@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Settings, Database, Globe, Layers, Save, RefreshCw, Power, Play, Pause } from 'lucide-react';
+import { X, Settings, Database, Globe, Layers, Save, RefreshCw, Power, Play, Pause, Monitor, Sun, Moon } from 'lucide-react';
 import styles from './GlobalSettingsModal.module.css';
 import WorldEditor from './settings/WorldEditor';
 import ModalOverlay from './common/ModalOverlay';
@@ -39,15 +39,27 @@ export default function GlobalSettingsModal({ isOpen, onClose }: GlobalSettingsM
     // Global Auto Mode
     const [globalAutoEnabled, setGlobalAutoEnabled] = useState(true);
 
+    // Theme
+    const [theme, setTheme] = useState<'system' | 'light' | 'dark'>('system');
+
     useEffect(() => {
         if (isOpen && activeTab === 'env') {
             loadEnvVars();
             loadGlobalAutoState();
+            // Load theme from localStorage
+            const saved = localStorage.getItem('saiverse-theme') as 'system' | 'light' | 'dark' | null;
+            setTheme(saved || 'system');
         }
         if (isOpen && activeTab === 'db') {
             loadTables();
         }
     }, [isOpen, activeTab]);
+
+    const changeTheme = (newTheme: 'system' | 'light' | 'dark') => {
+        setTheme(newTheme);
+        localStorage.setItem('saiverse-theme', newTheme);
+        window.dispatchEvent(new Event('theme-change'));
+    };
 
     const loadGlobalAutoState = async () => {
         try {
@@ -204,6 +216,39 @@ export default function GlobalSettingsModal({ isOpen, onClose }: GlobalSettingsM
                     <div className={styles.mainPanel}>
                         {activeTab === 'env' && (
                             <div className={styles.envContainer}>
+                                {/* Theme Selector */}
+                                <div className={styles.themeContainer}>
+                                    <div>
+                                        <div className={styles.themeLabel}>
+                                            {theme === 'dark' ? <Moon size={18} /> : theme === 'light' ? <Sun size={18} /> : <Monitor size={18} />}
+                                            テーマ
+                                        </div>
+                                        <div className={styles.themeDescription}>
+                                            UIの表示モードを切り替えます
+                                        </div>
+                                    </div>
+                                    <div className={styles.themeSelector}>
+                                        <button
+                                            className={`${styles.themeOption} ${theme === 'system' ? styles.active : ''}`}
+                                            onClick={() => changeTheme('system')}
+                                        >
+                                            <Monitor size={14} /> System
+                                        </button>
+                                        <button
+                                            className={`${styles.themeOption} ${theme === 'light' ? styles.active : ''}`}
+                                            onClick={() => changeTheme('light')}
+                                        >
+                                            <Sun size={14} /> Light
+                                        </button>
+                                        <button
+                                            className={`${styles.themeOption} ${theme === 'dark' ? styles.active : ''}`}
+                                            onClick={() => changeTheme('dark')}
+                                        >
+                                            <Moon size={14} /> Dark
+                                        </button>
+                                    </div>
+                                </div>
+
                                 {/* Global Auto Mode Toggle */}
                                 <div className={styles.toggleContainer}>
                                     <div>

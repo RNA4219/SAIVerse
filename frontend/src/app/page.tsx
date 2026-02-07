@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, KeyboardEvent, ChangeEvent, useCallback } from 'react';
-import ReactMarkdown from 'react-markdown';
+import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import remarkBreaks from 'remark-breaks';
 import styles from './page.module.css';
 import Sidebar from '@/components/Sidebar';
@@ -9,6 +9,8 @@ import ChatOptions from '@/components/ChatOptions';
 import RightSidebar from '@/components/RightSidebar';
 import PeopleModal from '@/components/PeopleModal';
 import TutorialWizard from '@/components/tutorial/TutorialWizard';
+import SaiverseLink from '@/components/SaiverseLink';
+import ItemModal from '@/components/ItemModal';
 import { Send, Paperclip, X, Info, Users, Menu, Copy, Check, SlidersHorizontal, ChevronDown } from 'lucide-react';
 import { useActivityTracker } from '@/hooks/useActivityTracker';
 
@@ -37,7 +39,7 @@ interface MessageLLMUsageTotal {
 
 interface Message {
     id?: string;
-    role: 'user' | 'assistant';
+    role: 'user' | 'assistant' | 'system';
     content: string;
     timestamp?: string; // ISO string
     avatar?: string;
@@ -49,6 +51,11 @@ interface Message {
     isError?: boolean;
     errorCode?: string;
     errorDetail?: string;
+    // Warning information
+    isWarning?: boolean;
+    warningCode?: string;
+    // Streaming state
+    _streaming?: boolean;
 }
 
 // File attachment types for upload
@@ -92,6 +99,7 @@ export default function Home() {
     const [isLoadingMore, setIsLoadingMore] = useState(false);
     const previousScrollHeightRef = useRef<number>(0);
     const prevNewestIdRef = useRef<string | undefined>(undefined); // Track newest message ID
+    const isProcessingRef = useRef(false); // Suppress polling during active request
 
     // New States
     const [isLeftOpen, setIsLeftOpen] = useState(false);
@@ -99,6 +107,25 @@ export default function Home() {
     const [isInfoOpen, setIsInfoOpen] = useState(false); // Default closed to prevent mobile flash
     const [moveTrigger, setMoveTrigger] = useState(0); // To trigger RightSidebar refresh
     const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null); // Track which message was copied
+
+    // ItemModal for saiverse:// item links
+    const [linkItemModalItem, setLinkItemModalItem] = useState<{ id: string; name: string; description?: string; type: string } | null>(null);
+    const handleOpenItemFromLink = useCallback(async (itemId: string) => {
+        try {
+            const res = await fetch(`/api/info/details?building_id=${currentBuildingIdRef.current}`);
+            if (!res.ok) return;
+            const data = await res.json();
+            const found = data.items?.find((it: { id: string }) => it.id === itemId);
+            if (found) {
+                setLinkItemModalItem(found);
+            } else {
+                // Item not in current building, create minimal item object
+                setLinkItemModalItem({ id: itemId, name: itemId, type: 'document' });
+            }
+        } catch {
+            setLinkItemModalItem({ id: itemId, name: itemId, type: 'document' });
+        }
+    }, []);
 
     // Copy message content to clipboard
     const handleCopyMessage = useCallback(async (messageId: string, content: string) => {
@@ -342,6 +369,62 @@ export default function Home() {
         }
     };
 
+    // Smart merge after AI response: updates IDs/metadata without replacing the whole array
+    const syncAfterResponse = async () => {
+        // Purpose: Update IDs and metadata on recently-added messages so that
+        // polling dedup and scroll tracking work with server-assigned IDs.
+        // Does NOT add or remove messages — polling handles new-message detection.
+        try {
+            const bid = currentBuildingIdRef.current;
+            const params = new URLSearchParams();
+            params.append('limit', '10');
+            if (bid) params.append('building_id', bid);
+
+            const res = await fetch(`/api/chat/history?${params.toString()}`);
+            if (!res.ok) return;
+            const data = await res.json();
+            const serverMessages: Message[] = data.history || [];
+            if (serverMessages.length === 0) return;
+
+            setMessages(prev => {
+                const result = [...prev];
+
+                // Build lookup from server messages: match by role + content prefix
+                const serverMap = new Map<string, { msg: Message; used: boolean }>();
+                for (const sm of serverMessages) {
+                    const key = `${sm.role}:${(sm.content || '').substring(0, 120)}`;
+                    serverMap.set(key, { msg: sm, used: false });
+                }
+
+                // Walk backwards through local messages, match with server
+                let matched = 0;
+                for (let i = result.length - 1; i >= 0; i--) {
+                    const local = result[i];
+                    const key = `${local.role}:${(local.content || '').substring(0, 120)}`;
+                    const entry = serverMap.get(key);
+                    if (entry && !entry.used) {
+                        result[i] = {
+                            ...local,
+                            id: entry.msg.id,
+                            avatar: entry.msg.avatar || local.avatar,
+                            sender: entry.msg.sender || local.sender,
+                            llm_usage: entry.msg.llm_usage || local.llm_usage,
+                            llm_usage_total: entry.msg.llm_usage_total || local.llm_usage_total,
+                            timestamp: entry.msg.timestamp || local.timestamp,
+                        };
+                        entry.used = true;
+                        matched++;
+                    }
+                }
+
+                console.log(`[syncAfterResponse] local=${prev.length} server=${serverMessages.length} matched=${matched} final=${result.length}`);
+                return result;
+            });
+        } catch (err) {
+            console.error("syncAfterResponse failed", err);
+        }
+    };
+
     // Scroll Restoration Logic
     // Runs when messages change. If we were loading more, adjust scroll.
     useEffect(() => {
@@ -444,6 +527,7 @@ export default function Home() {
         if (!isHistoryLoaded) return; // Don't poll until initial load is done
 
         const pollInterval = setInterval(async () => {
+            if (isProcessingRef.current) return; // Skip polling during active request
             const newestId = latestMessageIdRef.current;
             if (!newestId) return; // Skip if no real ID
 
@@ -476,6 +560,7 @@ export default function Home() {
 
     const handleSendMessage = async () => {
         if ((!inputValue.trim() && attachments.length === 0) || loadingStatus) return;
+        isProcessingRef.current = true;
 
         // Optimistic update
         // Temporary ID for key prop until refreshed
@@ -582,13 +667,26 @@ export default function Home() {
                             console.log('[DEBUG] Received say event:', event);
                             const avatarUrl = event.persona_id ? `/api/chat/persona/${event.persona_id}/avatar` : undefined;
 
-                            setMessages(prev => [...prev, {
-                                role: 'assistant',
-                                content: event.content,
-                                sender: event.persona_name || 'Assistant',
-                                avatar: avatarUrl,
-                                timestamp: new Date().toISOString()
-                            }]);
+                            setMessages(prev => {
+                                // Check if last message already has this content (from streaming completion)
+                                const last = prev[prev.length - 1];
+                                if (last && last.role === 'assistant' && !last._streaming
+                                    && last.content === event.content) {
+                                    // Already have this message, just update metadata
+                                    return [...prev.slice(0, -1), {
+                                        ...last,
+                                        avatar: avatarUrl || last.avatar,
+                                        sender: event.persona_name || last.sender,
+                                    }];
+                                }
+                                return [...prev, {
+                                    role: 'assistant',
+                                    content: event.content,
+                                    sender: event.persona_name || 'Assistant',
+                                    avatar: avatarUrl,
+                                    timestamp: new Date().toISOString()
+                                }];
+                            });
                             setLoadingStatus('Thinking...');
                         } else if (event.type === 'error') {
                             setMessages(prev => [...prev, {
@@ -597,6 +695,20 @@ export default function Home() {
                                 isError: true,
                                 errorCode: event.error_code || 'unknown',
                                 errorDetail: event.technical_detail,
+                                timestamp: new Date().toISOString()
+                            }]);
+                        } else if (event.type === 'metabolism') {
+                            if (event.status === 'started') {
+                                setLoadingStatus(event.content || '記憶を整理しています...');
+                            } else if (event.status === 'completed') {
+                                setLoadingStatus('Thinking...');
+                            }
+                        } else if (event.type === 'warning') {
+                            setMessages(prev => [...prev, {
+                                role: 'system',
+                                content: event.content || '',
+                                isWarning: true,
+                                warningCode: event.warning_code,
                                 timestamp: new Date().toISOString()
                             }]);
                         } else if (event.response) {
@@ -614,7 +726,8 @@ export default function Home() {
             setMessages(prev => [...prev, { role: 'assistant', content: "Error: Failed to send message." }]);
         } finally {
             setLoadingStatus(null);
-            fetchHistory(); // Sync final state (avatars, names etc)
+            await syncAfterResponse(); // Merge server state (IDs, avatars) without replacing messages
+            isProcessingRef.current = false; // Allow polling AFTER sync completes
         }
     };
 
@@ -731,7 +844,8 @@ export default function Home() {
             onTouchMove={handleTouchMove}
         >
             <Sidebar
-                onMove={(buildingId: string) => {
+                onMove={(buildingId?: string) => {
+                    if (!buildingId) return;
                     setCurrentBuildingId(buildingId);
                     currentBuildingIdRef.current = buildingId;
                     setMessages([]);
@@ -783,7 +897,7 @@ export default function Home() {
                     {isLoadingMore && <div style={{ textAlign: 'center', padding: '10px', color: '#666' }}>Loading history...</div>}
                     {messages.map((msg, idx) => (
                         <div key={msg.id || idx} className={`${styles.message} ${styles[msg.role]}`}>
-                            <div className={`${styles.card} ${msg.isError ? styles.errorCard : ''} ${msg.isError && msg.errorCode ? styles[`error_${msg.errorCode}`] : ''}`}>
+                            <div className={`${styles.card} ${msg.isError ? styles.errorCard : ''} ${msg.isWarning ? styles.warningCard : ''} ${msg.isError && msg.errorCode ? styles[`error_${msg.errorCode}`] : ''}`}>
                                 <div className={styles.cardHeader}>
                                     <img
                                         src={msg.avatar || (msg.role === 'user' ? '/api/static/icons/user.png' : '/api/static/icons/host.png')}
@@ -827,8 +941,18 @@ export default function Home() {
                                                 </details>
                                             )}
                                         </div>
+                                    ) : msg.isWarning ? (
+                                        <div className={styles.warningContent}>
+                                            <span className={styles.warningMessage}>{msg.content}</span>
+                                        </div>
                                     ) : (
-                                        <ReactMarkdown remarkPlugins={[remarkBreaks]}>{msg.content}</ReactMarkdown>
+                                        <ReactMarkdown
+                                            remarkPlugins={[remarkBreaks]}
+                                            urlTransform={(url) => url.startsWith('saiverse://') ? url : defaultUrlTransform(url)}
+                                            components={{
+                                                a: ({ href, children }) => <SaiverseLink href={href} children={children} onOpenItem={handleOpenItemFromLink} />,
+                                            }}
+                                        >{msg.content}</ReactMarkdown>
                                     )}
                                 </div>
                                 {(msg.timestamp || msg.llm_usage || msg.llm_usage_total) && (
@@ -985,6 +1109,12 @@ export default function Home() {
             <PeopleModal
                 isOpen={isPeopleModalOpen}
                 onClose={() => setIsPeopleModalOpen(false)}
+            />
+
+            <ItemModal
+                isOpen={!!linkItemModalItem}
+                onClose={() => setLinkItemModalItem(null)}
+                item={linkItemModalItem}
             />
 
             {/* Initial Tutorial Wizard */}

@@ -35,9 +35,11 @@
     }
   },
   "pricing": {
-    "input_per_1m_tokens": 2.50,
+    "input_per_1m_tokens": 2.5,
     "cached_input_per_1m_tokens": 1.25,
-    "output_per_1m_tokens": 10.00,
+    "output_per_1m_tokens": 10.0,
     "currency": "USD"
-  }
+  },
+  "default_max_history_messages": 50,
+  "metabolism_keep_messages": 30
 }

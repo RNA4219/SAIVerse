@@ -396,7 +396,8 @@ def clear_all_entries(conn: sqlite3.Connection) -> int:
 def regenerate_entry(
     conn: sqlite3.Connection,
     entry_id: str,
-    model_name: Optional[str] = None
+    model_name: Optional[str] = None,
+    persona_id: Optional[str] = None,
 ) -> Optional[ArasujiEntry]:
     """Regenerate a Chronicle entry while preserving parent relationship.
     
@@ -449,7 +450,7 @@ def regenerate_entry(
     
     # 5. Call scripts layer for business logic
     from scripts.build_arasuji import regenerate_entry_from_messages
-    new_entry = regenerate_entry_from_messages(conn, messages, model_name)
+    new_entry = regenerate_entry_from_messages(conn, messages, model_name, persona_id=persona_id)
     
     if not new_entry:
         return None
@@ -630,8 +631,17 @@ def search_entries(
     params: List[Any] = []
 
     if query:
-        conditions.append("content LIKE ?")
-        params.append(f"%{query}%")
+        # Split by whitespace and match ANY keyword (OR)
+        keywords = query.split()
+        if len(keywords) > 1:
+            keyword_conditions = []
+            for kw in keywords:
+                keyword_conditions.append("content LIKE ?")
+                params.append(f"%{kw}%")
+            conditions.append(f"({' OR '.join(keyword_conditions)})")
+        else:
+            conditions.append("content LIKE ?")
+            params.append(f"%{query}%")
 
     if start_time is not None:
         conditions.append("end_time >= ?")

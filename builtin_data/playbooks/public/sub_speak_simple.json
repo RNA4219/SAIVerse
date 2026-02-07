@@ -14,12 +14,16 @@
     ],
     "context_requirements": {
         "history_depth": "full",
+        "history_balanced": false,
+        "include_internal": false,
+        "system_prompt": true,
+        "memory_weave": true,
+        "working_memory": false,
         "inventory": true,
         "building_items": true,
-        "system_prompt": true,
         "available_playbooks": true,
         "visual_context": true,
-        "memory_weave": true
+        "realtime_context": true
     },
     "router_callable": false,
     "nodes": [
@@ -28,7 +32,11 @@
             "type": "llm",
             "action": null,
             "speak": true,
-            "memorize": {"tags": ["conversation"]},
+            "memorize": {
+                "tags": [
+                    "conversation"
+                ]
+            },
             "output_keys": [
                 {
                     "text": "speak_content"

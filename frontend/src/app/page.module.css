@@ -366,59 +366,55 @@
     border-top-left-radius: 0.2rem;
 }
 
-@media (prefers-color-scheme: light) {
-    .user .card {
-        background: #eff6ff;
-        color: #1e3a8a;
-    }
-
-    .assistant .card {
-        background: #ffffff;
-        color: #1f2937;
-        border: 1px solid #e5e7eb;
-    }
-
-    /* Light mode markdown styles */
-    .cardBody code {
-        background: rgba(0, 0, 0, 0.08);
-    }
-
-    .cardBody pre {
-        background: #f3f4f6;
-    }
-
-    .cardBody blockquote {
-        border-left-color: rgba(0, 0, 0, 0.2);
-    }
-
-    .cardBody a {
-        color: #2563eb;
-    }
-
-    .cardBody hr {
-        border-top-color: rgba(0, 0, 0, 0.1);
-    }
-
-    .cardBody th,
-    .cardBody td {
-        border-color: rgba(0, 0, 0, 0.15);
-    }
-
-    .cardBody th {
-        background: rgba(0, 0, 0, 0.05);
-    }
+:global([data-theme="light"]) .user .card {
+    background: #eff6ff;
+    color: #1e3a8a;
 }
 
-@media (prefers-color-scheme: dark) {
-    .user .card {
-        background: #374151;
-        color: #f9fafb;
-    }
+:global([data-theme="light"]) .assistant .card {
+    background: #ffffff;
+    color: #1f2937;
+    border: 1px solid #e5e7eb;
+}
 
-    .assistant .card {
-        background: #111827;
-        border-color: #374151;
-    }
+/* Light mode markdown styles */
+:global([data-theme="light"]) .cardBody code {
+    background: rgba(0, 0, 0, 0.08);
+}
+
+:global([data-theme="light"]) .cardBody pre {
+    background: #f3f4f6;
+}
+
+:global([data-theme="light"]) .cardBody blockquote {
+    border-left-color: rgba(0, 0, 0, 0.2);
+}
+
+:global([data-theme="light"]) .cardBody a {
+    color: #2563eb;
+}
+
+:global([data-theme="light"]) .cardBody hr {
+    border-top-color: rgba(0, 0, 0, 0.1);
+}
+
+:global([data-theme="light"]) .cardBody th,
+:global([data-theme="light"]) .cardBody td {
+    border-color: rgba(0, 0, 0, 0.15);
+}
+
+:global([data-theme="light"]) .cardBody th {
+    background: rgba(0, 0, 0, 0.05);
+}
+
+:global([data-theme="dark"]) .user .card {
+    background: #374151;
+    color: #f9fafb;
+}
+
+:global([data-theme="dark"]) .assistant .card {
+    background: #111827;
+    border-color: #374151;
 }
 
 .inputArea {
@@ -504,26 +500,23 @@
     background: rgba(99, 102, 241, 0.1);
 }
 
-@media (prefers-color-scheme: dark) {
+:global([data-theme="dark"]) .header {
+    background: rgba(10, 10, 10, 0.8);
+    border-color: rgba(255, 255, 255, 0.1);
+}
 
-    .header {
-        background: rgba(10, 10, 10, 0.8);
-        border-color: rgba(255, 255, 255, 0.1);
-    }
+:global([data-theme="dark"]) .assistant .bubble {
+    background: #262626;
+}
 
-    .assistant .bubble {
-        background: #262626;
-    }
+:global([data-theme="dark"]) .inputWrapper {
+    background: rgba(30, 30, 30, 0.5);
+    border-color: rgba(255, 255, 255, 0.15);
+    color: #ffffff !important;
+}
 
-    .inputWrapper {
-        background: rgba(30, 30, 30, 0.5);
-        border-color: rgba(255, 255, 255, 0.15);
-        color: #ffffff !important;
-    }
-
-    .inputWrapper textarea {
-        color: #ffffff !important;
-    }
+:global([data-theme="dark"]) .inputWrapper textarea {
+    color: #ffffff !important;
 }
 
 /* Mobile Responsive */
@@ -613,25 +606,23 @@
     pointer-events: none;
 }
 
-@media (prefers-color-scheme: dark) {
-    .optionsBtn {
-        background: rgba(30, 30, 30, 0.5);
-        border-color: rgba(255, 255, 255, 0.15);
-        color: #aaa;
-    }
+:global([data-theme="dark"]) .optionsBtn {
+    background: rgba(30, 30, 30, 0.5);
+    border-color: rgba(255, 255, 255, 0.15);
+    color: #aaa;
+}
 
-    .optionsBtn:hover {
-        background: rgba(50, 50, 50, 0.7);
-        border-color: rgba(255, 255, 255, 0.25);
-    }
+:global([data-theme="dark"]) .optionsBtn:hover {
+    background: rgba(50, 50, 50, 0.7);
+    border-color: rgba(255, 255, 255, 0.25);
+}
 
-    .modelName {
-        color: #ddd;
-    }
+:global([data-theme="dark"]) .modelName {
+    color: #ddd;
+}
 
-    .dropIndicator {
-        background: rgba(99, 102, 241, 0.9);
-    }
+:global([data-theme="dark"]) .dropIndicator {
+    background: rgba(99, 102, 241, 0.9);
 }
 
 /* Error message styles */
@@ -723,44 +714,57 @@
     word-break: break-word;
 }
 
-@media (prefers-color-scheme: dark) {
-    .error_rate_limit {
-        background-color: rgba(255, 193, 7, 0.1);
-    }
+.warningCard {
+    border-left: 4px solid #f0ad4e;
+    background-color: rgba(240, 173, 78, 0.08);
+}
 
-    .error_timeout {
-        background-color: rgba(23, 162, 184, 0.1);
-    }
+.warningContent {
+    padding: 0.5rem 0;
+}
 
-    .error_safety_filter {
-        background-color: rgba(220, 53, 69, 0.1);
-    }
+.warningMessage {
+    color: var(--foreground);
+    font-size: 0.9rem;
+    line-height: 1.5;
+}
 
-    .error_server_error {
-        background-color: rgba(220, 53, 69, 0.1);
-    }
+:global([data-theme="dark"]) .error_rate_limit {
+    background-color: rgba(255, 193, 7, 0.1);
+}
 
-    .error_empty_response {
-        background-color: rgba(108, 117, 125, 0.1);
-    }
+:global([data-theme="dark"]) .error_timeout {
+    background-color: rgba(23, 162, 184, 0.1);
+}
 
-    .error_authentication {
-        background-color: rgba(253, 126, 20, 0.1);
-    }
+:global([data-theme="dark"]) .error_safety_filter {
+    background-color: rgba(220, 53, 69, 0.1);
+}
 
-    .error_unknown {
-        background-color: rgba(108, 117, 125, 0.1);
-    }
+:global([data-theme="dark"]) .error_server_error {
+    background-color: rgba(220, 53, 69, 0.1);
+}
 
-    .errorDetails {
-        color: #aaa;
-    }
+:global([data-theme="dark"]) .error_empty_response {
+    background-color: rgba(108, 117, 125, 0.1);
+}
 
-    .errorDetails summary {
-        color: #888;
-    }
+:global([data-theme="dark"]) .error_authentication {
+    background-color: rgba(253, 126, 20, 0.1);
+}
 
-    .errorDetails pre {
-        background: rgba(255, 255, 255, 0.05);
-    }
+:global([data-theme="dark"]) .error_unknown {
+    background-color: rgba(108, 117, 125, 0.1);
+}
+
+:global([data-theme="dark"]) .errorDetails {
+    color: #aaa;
+}
+
+:global([data-theme="dark"]) .errorDetails summary {
+    color: #888;
+}
+
+:global([data-theme="dark"]) .errorDetails pre {
+    background: rgba(255, 255, 255, 0.05);
 }

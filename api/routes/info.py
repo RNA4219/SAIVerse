@@ -3,7 +3,7 @@ from fastapi.responses import JSONResponse, FileResponse
 from pathlib import Path
 from pydantic import BaseModel
 from typing import List, Optional, Any
-from api.deps import get_manager
+from api.deps import get_manager, avatar_path_to_url
 
 router = APIRouter()
 
@@ -50,17 +50,7 @@ def get_building_details(building_id: Optional[str] = None, manager = Depends(ge
         for oid in sorted_ids:
             if oid in manager.personas:
                 persona = manager.personas[oid]
-                avatar = persona.avatar_image
-                if avatar:
-                    if avatar.startswith("user_data/icons/"):
-                        # Convert user_data/icons path to API URL
-                        avatar = "/api/static/user_icons/" + avatar[len("user_data/icons/"):]
-                    elif avatar.startswith("builtin_data/icons/"):
-                        # Convert builtin_data/icons path to API URL
-                        avatar = "/api/static/builtin_icons/" + avatar[len("builtin_data/icons/"):]
-                    elif avatar.startswith("assets/"):
-                        # Convert local path "assets/..." to API URL "/api/static/..."
-                        avatar = "/api/static/" + avatar[7:]
+                avatar = avatar_path_to_url(persona.avatar_image)
                 
                 occupants_list.append({
                     "id": oid,

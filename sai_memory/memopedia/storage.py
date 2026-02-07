@@ -616,12 +616,26 @@ def search_pages_filtered(
     Returns:
         List of matching MemopediaPage, newest first.
     """
-    pattern = f"%{query}%"
-    conditions = [
-        "(title LIKE ? OR summary LIKE ? OR content LIKE ?)",
-        "(is_deleted = 0 OR is_deleted IS NULL)",
-    ]
-    params: list = [pattern, pattern, pattern]
+    # Split by whitespace and match ANY keyword (OR) across title/summary/content
+    keywords = query.split()
+    if len(keywords) > 1:
+        keyword_conditions = []
+        params: list = []
+        for kw in keywords:
+            pat = f"%{kw}%"
+            keyword_conditions.append("(title LIKE ? OR summary LIKE ? OR content LIKE ?)")
+            params.extend([pat, pat, pat])
+        conditions = [
+            f"({' OR '.join(keyword_conditions)})",
+            "(is_deleted = 0 OR is_deleted IS NULL)",
+        ]
+    else:
+        pattern = f"%{query}%"
+        conditions = [
+            "(title LIKE ? OR summary LIKE ? OR content LIKE ?)",
+            "(is_deleted = 0 OR is_deleted IS NULL)",
+        ]
+        params: list = [pattern, pattern, pattern]
 
     if category:
         conditions.append("category = ?")

@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException
-from api.deps import get_manager
+from api.deps import get_manager, avatar_path_to_url
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
 
@@ -196,24 +196,7 @@ def get_chat_history(
                 persona = manager.personas.get(pid)
                 if persona:
                     sender = persona.persona_name
-                    # Use same avatar handling logic as info.py to support both file paths and API URLs
-                    avatar_path = persona.avatar_image
-                    if avatar_path:
-                        if avatar_path.startswith("user_data/icons/"):
-                            # Convert user_data/icons path to API URL
-                            avatar = "/api/static/user_icons/" + avatar_path[len("user_data/icons/"):]
-                        elif avatar_path.startswith("builtin_data/icons/"):
-                            # Convert builtin_data/icons path to API URL
-                            avatar = "/api/static/builtin_icons/" + avatar_path[len("builtin_data/icons/"):]
-                        elif avatar_path.startswith("assets/"):
-                            # Convert legacy assets path to API URL
-                            avatar = "/api/static/" + avatar_path[7:]
-                        else:
-                            # If avatar already starts with /api/ or other format, use it as-is
-                            avatar = avatar_path
-                    else:
-                        # Fallback if no avatar set
-                        avatar = "/api/static/builtin_icons/host.png"
+                    avatar = avatar_path_to_url(persona.avatar_image) or "/api/static/builtin_icons/host.png"
             else:
                 sender = "Assistant"
         elif role == "host":

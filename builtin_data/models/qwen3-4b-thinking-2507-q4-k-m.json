@@ -11,5 +11,7 @@
     "temperature": 0.7,
     "top_p": 0.9,
     "max_tokens": 2048
-  }
+  },
+  "default_max_history_messages": 20,
+  "metabolism_keep_messages": 10
 }

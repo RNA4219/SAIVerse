@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from typing import List, Optional
-from api.deps import get_manager
+from api.deps import get_manager, avatar_path_to_url
 from database.models import UserAiLink
 from .models import AIConfigResponse, UpdateAIConfigRequest
 
@@ -28,8 +28,8 @@ def get_persona_config(persona_id: str, manager = Depends(get_manager)):
         default_model=details["DEFAULT_MODEL"],
         lightweight_model=details.get("LIGHTWEIGHT_MODEL"),
         interaction_mode=details["INTERACTION_MODE"],
-        avatar_path=details.get("AVATAR_IMAGE"),
-        appearance_image_path=details.get("APPEARANCE_IMAGE_PATH"),
+        avatar_path=avatar_path_to_url(details.get("AVATAR_IMAGE")),
+        appearance_image_path=avatar_path_to_url(details.get("APPEARANCE_IMAGE_PATH")),
         home_city_id=details["HOME_CITYID"],
         linked_user_id=linked_user_id,
     )

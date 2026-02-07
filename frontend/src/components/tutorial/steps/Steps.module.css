@@ -375,3 +375,136 @@
 .startButton:hover {
     background-color: #339af0;
 }
+
+/* ===== Light Mode Overrides ===== */
+:global([data-theme="light"]) .welcomeTitle {
+    color: #1f2937;
+}
+
+:global([data-theme="light"]) .descriptionBox {
+    background-color: #f1f5f9;
+    color: #475569;
+}
+
+:global([data-theme="light"]) .descriptionBox strong {
+    color: #2563eb;
+}
+
+:global([data-theme="light"]) .hint {
+    color: #64748b;
+}
+
+:global([data-theme="light"]) .title {
+    color: #1f2937;
+}
+
+:global([data-theme="light"]) .subtitle {
+    color: #64748b;
+}
+
+:global([data-theme="light"]) .field label {
+    color: #475569;
+}
+
+:global([data-theme="light"]) .field input,
+:global([data-theme="light"]) .field select {
+    background-color: #ffffff;
+    border-color: #cbd5e1;
+    color: #1f2937;
+}
+
+:global([data-theme="light"]) .field input::placeholder {
+    color: #94a3b8;
+}
+
+:global([data-theme="light"]) .field input:focus,
+:global([data-theme="light"]) .field select:focus {
+    border-color: #3b82f6;
+}
+
+:global([data-theme="light"]) .fieldHint {
+    color: #64748b;
+}
+
+:global([data-theme="light"]) .apiKeyItem {
+    background-color: #f8fafc;
+}
+
+:global([data-theme="light"]) .apiKeyHeader label {
+    color: #1f2937;
+}
+
+:global([data-theme="light"]) .providerDescription {
+    color: #64748b;
+}
+
+:global([data-theme="light"]) .freeNote {
+    color: #64748b;
+    border-left-color: #cbd5e1;
+}
+
+:global([data-theme="light"]) .inputRow input {
+    background-color: #ffffff;
+    border-color: #cbd5e1;
+    color: #1f2937;
+}
+
+:global([data-theme="light"]) .inputRow input::placeholder {
+    color: #94a3b8;
+}
+
+:global([data-theme="light"]) .inputRow input:focus {
+    border-color: #3b82f6;
+}
+
+:global([data-theme="light"]) .modelCard {
+    background-color: #f8fafc;
+}
+
+:global([data-theme="light"]) .modelCard:hover:not(.disabled) {
+    background-color: #f1f5f9;
+    border-color: #3b82f6;
+}
+
+:global([data-theme="light"]) .modelCard.selected {
+    background-color: #dbeafe;
+    border-color: #3b82f6;
+}
+
+:global([data-theme="light"]) .modelName {
+    color: #1f2937;
+}
+
+:global([data-theme="light"]) .modelProvider {
+    color: #64748b;
+}
+
+:global([data-theme="light"]) .choiceCard {
+    background-color: #f8fafc;
+}
+
+:global([data-theme="light"]) .choiceCard:hover {
+    background-color: #f1f5f9;
+    border-color: #3b82f6;
+}
+
+:global([data-theme="light"]) .choiceCard.selected {
+    background-color: #dbeafe;
+    border-color: #3b82f6;
+}
+
+:global([data-theme="light"]) .choiceTitle {
+    color: #1f2937;
+}
+
+:global([data-theme="light"]) .choiceDescription {
+    color: #64748b;
+}
+
+:global([data-theme="light"]) .completeTitle {
+    color: #1f2937;
+}
+
+:global([data-theme="light"]) .completeSubtitle {
+    color: #64748b;
+}

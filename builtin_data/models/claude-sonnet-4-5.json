@@ -23,5 +23,7 @@
     ],
     "type": "explicit",
     "min_tokens": 1024
-  }
+  },
+  "default_max_history_messages": 40,
+  "metabolism_keep_messages": 20
 }

@@ -468,6 +468,8 @@ class RuntimeService(
                 # プロキシ等のタイムアウトを防ぐためのPing
                 yield json.dumps({"type": "ping"}, ensure_ascii=False) + "\n"
 
+        bh_sizes = {bid: len(h) for bid, h in self.building_histories.items() if h}
+        logging.debug("[runtime] pre-save building_histories sizes: %s", bh_sizes)
         self._save_building_histories()
         for persona in self.personas.values():
             persona._save_session_metadata()

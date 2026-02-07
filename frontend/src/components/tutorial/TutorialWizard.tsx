@@ -91,7 +91,8 @@ export default function TutorialWizard({
         apiKeys: {},
         defaultModel: '',
         lightweightModel: '',
-        createdPersonaId: null
+        createdPersonaId: null,
+        createdRoomId: null
     });
 
     const [availableModels, setAvailableModels] = useState<ModelInfo[]>([]);

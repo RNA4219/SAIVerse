@@ -114,7 +114,7 @@ def compile_playbook(
             if conditional_next:
                 logger.debug("[langgraph] Node '%s' has conditional_next", node_def.id)
                 # Create routing function that returns path key (not node ID directly)
-                def make_router(cond_next):
+                def make_router(cond_next, _node_id=node_def.id, _pb_name=playbook.name):
                     def router_fn(state: dict) -> str:
                         import logging
                         logger = logging.getLogger(__name__)
@@ -146,6 +146,13 @@ def compile_playbook(
                         logger.debug("[langgraph] conditional_next: field=%s value=%s operator=%s cases=%s",
                                     cond_next.field, value, operator, list(cond_next.cases.keys()))
 
+                        # Helper to expand template variables in case keys
+                        def _expand_case_key(key: str) -> str:
+                            if "{" not in key:
+                                return key
+                            from sea.runtime import _format
+                            return _format(key, state)
+
                         # Handle numeric comparison operators
                         if operator in ("gte", "gt", "lte", "lt", "ne"):
                             try:
@@ -159,7 +166,8 @@ def compile_playbook(
                                 if case_key == "default":
                                     continue
                                 try:
-                                    case_num = float(case_key)
+                                    expanded_key = _expand_case_key(case_key)
+                                    case_num = float(expanded_key)
                                     matched = False
                                     if operator == "gte" and num_value >= case_num:
                                         matched = True
@@ -175,6 +183,8 @@ def compile_playbook(
                                     if matched:
                                         logger.debug("[langgraph] conditional_next: numeric match %s %s %s -> %s",
                                                     num_value, operator, case_num, case_key)
+                                        from logging_config import log_sea_trace
+                                        log_sea_trace(_pb_name, _node_id, "PASS", f"{cond_next.field}={num_value} {operator} {case_num} → {cond_next.cases.get(case_key, 'END')}")
                                         return case_key
                                 except (ValueError, TypeError):
                                     continue
@@ -182,6 +192,8 @@ def compile_playbook(
                             # No numeric match, try default
                             if "default" in cond_next.cases:
                                 logger.debug("[langgraph] conditional_next: no numeric match, using default")
+                                from logging_config import log_sea_trace
+                                log_sea_trace(_pb_name, _node_id, "PASS", f"{cond_next.field}={num_value} {operator} (no match) → {cond_next.cases.get('default', 'END')}")
                                 return "default"
                             logger.debug("[langgraph] conditional_next: no match, ending")
                             return "__end__"
@@ -189,14 +201,26 @@ def compile_playbook(
                         # Default: exact string match (eq operator)
                         value_str = str(value) if value is not None else ""
 
+                        # Try direct match first
                         if value_str in cond_next.cases:
                             result = value_str
-                        elif "default" in cond_next.cases:
-                            result = "default"
                         else:
-                            result = "__end__"
+                            # Try expanding template variables in case keys
+                            result = None
+                            for case_key in cond_next.cases:
+                                if case_key == "default":
+                                    continue
+                                expanded = _expand_case_key(case_key)
+                                if expanded == value_str:
+                                    result = case_key  # Return original key for path_map
+                                    break
+                            if result is None:
+                                result = "default" if "default" in cond_next.cases else "__end__"
 
-                        logger.debug("[langgraph] conditional_next: selected path=%s -> target=%s", result, cond_next.cases.get(result, "END"))
+                        target = cond_next.cases.get(result, "END")
+                        logger.debug("[langgraph] conditional_next: selected path=%s -> target=%s", result, target)
+                        from logging_config import log_sea_trace
+                        log_sea_trace(_pb_name, _node_id, "PASS", f"{cond_next.field}={value_str} {operator} → {target}")
                         return result
                     return router_fn
 

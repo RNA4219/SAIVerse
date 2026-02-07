@@ -84,6 +84,30 @@ def get_context_length(model: str) -> int:
     return int(MODEL_CONFIGS.get(model, {}).get("context_length", 120000))
 
 
+def get_default_max_history_messages(model: str) -> int | None:
+    """Get the default maximum number of history messages for a model.
+
+    Returns None if not configured (falls back to character-based limit).
+    """
+    config = MODEL_CONFIGS.get(model, {})
+    val = config.get("default_max_history_messages")
+    if val is not None:
+        return int(val)
+    return None
+
+
+def get_metabolism_keep_messages(model: str) -> int | None:
+    """Get the number of messages to keep after metabolism (low watermark).
+
+    Returns None if not configured (metabolism disabled for this model).
+    """
+    config = MODEL_CONFIGS.get(model, {})
+    val = config.get("metabolism_keep_messages")
+    if val is not None:
+        return int(val)
+    return None
+
+
 def get_model_display_name(model: str) -> str:
     """Get display name for a model, falling back to model ID if not set."""
     config = MODEL_CONFIGS.get(model, {})

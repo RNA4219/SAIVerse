@@ -63,6 +63,11 @@ class ModelConfigResponse(BaseModel):
     current_model: Optional[str]
     parameters: Dict[str, ParameterSpec]
     current_values: Dict[str, Any]
+    max_history_messages: Optional[int] = None
+    max_history_messages_model_default: Optional[int] = None
+    metabolism_enabled: bool = True
+    metabolism_keep_messages: Optional[int] = None
+    metabolism_keep_messages_model_default: Optional[int] = None
 
 @router.get("/models", response_model=List[ModelInfo])
 def get_models():
@@ -213,12 +218,18 @@ def get_current_config(manager = Depends(get_manager)):
     """Get current model and parameter configuration."""
     current_model = manager.model if manager.model != "None" else None
     
-    # If no model selected, return empty
+    # If no model selected, return empty (but still include overrides)
     if not current_model:
+        override = getattr(manager, "max_history_messages_override", None)
         return {
             "current_model": None,
             "parameters": {},
-            "current_values": {}
+            "current_values": {},
+            "max_history_messages": override,
+            "max_history_messages_model_default": None,
+            "metabolism_enabled": getattr(manager, "metabolism_enabled", True),
+            "metabolism_keep_messages": getattr(manager, "metabolism_keep_messages_override", None),
+            "metabolism_keep_messages_model_default": None,
         }
 
     # Get param specs
@@ -257,10 +268,24 @@ def get_current_config(manager = Depends(get_manager)):
     if manager.model_parameter_overrides:
         current_values.update(manager.model_parameter_overrides)
 
+    # Max history messages
+    from model_configs import get_default_max_history_messages, get_metabolism_keep_messages
+    override = getattr(manager, "max_history_messages_override", None)
+    model_default = get_default_max_history_messages(current_model)
+
+    # Metabolism settings
+    metab_override = getattr(manager, "metabolism_keep_messages_override", None)
+    metab_model_default = get_metabolism_keep_messages(current_model)
+
     return {
         "current_model": current_model,
         "parameters": specs,
-        "current_values": current_values
+        "current_values": current_values,
+        "max_history_messages": override if override is not None else model_default,
+        "max_history_messages_model_default": model_default,
+        "metabolism_enabled": getattr(manager, "metabolism_enabled", True),
+        "metabolism_keep_messages": metab_override if metab_override is not None else metab_model_default,
+        "metabolism_keep_messages_model_default": metab_model_default,
     }
 
 @router.post("/model")
@@ -315,12 +340,26 @@ def set_model(req: UpdateModelRequest, manager = Depends(get_manager)):
     if manager.model_parameter_overrides:
         current_values.update(manager.model_parameter_overrides)
 
+    # Max history messages (reset override on model change)
+    from model_configs import get_default_max_history_messages, get_metabolism_keep_messages
+    manager.max_history_messages_override = None
+    model_default = get_default_max_history_messages(current_model)
+
+    # Metabolism (reset override on model change)
+    manager.metabolism_keep_messages_override = None
+    metab_model_default = get_metabolism_keep_messages(current_model)
+
     return {
         "success": True,
         "model": req.model,
         "current_model": current_model,
         "parameters": specs,
-        "current_values": current_values
+        "current_values": current_values,
+        "max_history_messages": model_default,
+        "max_history_messages_model_default": model_default,
+        "metabolism_enabled": getattr(manager, "metabolism_enabled", True),
+        "metabolism_keep_messages": metab_model_default,
+        "metabolism_keep_messages_model_default": metab_model_default,
     }
 
 @router.post("/parameters")
@@ -436,4 +475,102 @@ def set_cache_settings(req: CacheConfigRequest, manager = Depends(get_manager)):
         "success": True,
         "enabled": manager.state.cache_enabled,
         "ttl": manager.state.cache_ttl,
+    }
+
+
+class MaxHistoryMessagesRequest(BaseModel):
+    value: Optional[int] = None
+
+
+@router.get("/max-history-messages")
+def get_max_history_messages(manager=Depends(get_manager)):
+    """Get current max history messages setting.
+
+    Returns the session override if set, otherwise the model default.
+    """
+    from model_configs import get_default_max_history_messages
+
+    override = getattr(manager, "max_history_messages_override", None)
+    current_model = manager.model if manager.model != "None" else None
+
+    model_default = None
+    if current_model:
+        model_default = get_default_max_history_messages(current_model)
+
+    return {
+        "value": override if override is not None else model_default,
+        "override": override,
+        "model_default": model_default,
+    }
+
+
+@router.post("/max-history-messages")
+def set_max_history_messages(req: MaxHistoryMessagesRequest, manager=Depends(get_manager)):
+    """Set session override for max history messages.
+
+    Send {"value": null} to clear the override and use the model default.
+    """
+    if req.value is not None and req.value < 1:
+        raise HTTPException(status_code=400, detail="value must be >= 1 or null")
+    manager.max_history_messages_override = req.value
+    return {"success": True, "value": req.value}
+
+
+class MetabolismConfigRequest(BaseModel):
+    enabled: Optional[bool] = None
+    keep_messages: Optional[int] = None
+
+
+@router.get("/metabolism")
+def get_metabolism_settings(manager=Depends(get_manager)):
+    """Get current metabolism settings."""
+    from model_configs import get_metabolism_keep_messages, get_default_max_history_messages
+
+    current_model = manager.model if manager.model != "None" else None
+    metab_override = getattr(manager, "metabolism_keep_messages_override", None)
+    metab_model_default = None
+    high_wm = None
+    if current_model:
+        metab_model_default = get_metabolism_keep_messages(current_model)
+        high_wm = get_default_max_history_messages(current_model)
+
+    return {
+        "enabled": getattr(manager, "metabolism_enabled", True),
+        "keep_messages": metab_override if metab_override is not None else metab_model_default,
+        "keep_messages_override": metab_override,
+        "keep_messages_model_default": metab_model_default,
+        "high_watermark": high_wm,
+    }
+
+
+@router.post("/metabolism")
+def set_metabolism_settings(req: MetabolismConfigRequest, manager=Depends(get_manager)):
+    """Set metabolism settings."""
+    if req.enabled is not None:
+        manager.metabolism_enabled = req.enabled
+
+    if req.keep_messages is not None:
+        if req.keep_messages < 1:
+            raise HTTPException(status_code=400, detail="keep_messages must be >= 1")
+        # Validate: high_wm - keep_messages >= 20
+        from model_configs import get_default_max_history_messages
+        current_model = manager.model if manager.model != "None" else None
+        high_wm_override = getattr(manager, "max_history_messages_override", None)
+        high_wm = high_wm_override
+        if high_wm is None and current_model:
+            high_wm = get_default_max_history_messages(current_model)
+        if high_wm is not None and high_wm - req.keep_messages < 20:
+            raise HTTPException(
+                status_code=400,
+                detail=f"keep_messages must be at most {high_wm - 20} (high watermark {high_wm} - 20)",
+            )
+        manager.metabolism_keep_messages_override = req.keep_messages
+    elif req.keep_messages is None and req.enabled is None:
+        # Clear override
+        manager.metabolism_keep_messages_override = None
+
+    return {
+        "success": True,
+        "enabled": getattr(manager, "metabolism_enabled", True),
+        "keep_messages": getattr(manager, "metabolism_keep_messages_override", None),
     }

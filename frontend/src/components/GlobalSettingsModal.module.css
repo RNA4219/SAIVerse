@@ -288,6 +288,65 @@
     color: #f1f5f9;
 }
 
+/* Theme Selector Styles */
+.themeContainer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1rem;
+    background: #0f172a;
+    border: 1px solid #334155;
+    border-radius: 8px;
+    margin-bottom: 1.5rem;
+}
+
+.themeLabel {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    font-weight: 600;
+    color: #f1f5f9;
+}
+
+.themeDescription {
+    font-size: 0.85rem;
+    color: #94a3b8;
+    margin-top: 0.25rem;
+}
+
+.themeSelector {
+    display: flex;
+    background: #334155;
+    border-radius: 8px;
+    padding: 3px;
+    gap: 2px;
+}
+
+.themeOption {
+    padding: 0.4rem 0.8rem;
+    border: none;
+    background: transparent;
+    color: #94a3b8;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    font-weight: 500;
+    transition: all 0.2s;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+}
+
+.themeOption:hover {
+    color: #f1f5f9;
+}
+
+.themeOption.active {
+    background: #1e293b;
+    color: #60a5fa;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+}
+
 /* Toggle Switch Styles */
 .toggleContainer {
     display: flex;
@@ -412,4 +471,178 @@
         font-size: 0.85rem;
         color: #94a3b8;
     }
+}
+
+/* ── Light Mode Overrides ── */
+:global([data-theme="light"]) .modal {
+    background: #ffffff;
+    border-color: #e2e8f0;
+    color: #1f2937;
+}
+
+:global([data-theme="light"]) .header {
+    background: #f1f5f9;
+    border-bottom-color: #e2e8f0;
+}
+
+:global([data-theme="light"]) .header h2 {
+    color: #1f2937;
+}
+
+:global([data-theme="light"]) .closeBtn {
+    color: #64748b;
+}
+
+:global([data-theme="light"]) .closeBtn:hover {
+    background: #e2e8f0;
+    color: #1f2937;
+}
+
+:global([data-theme="light"]) .sidebar {
+    background: #f1f5f9;
+    border-right-color: #e2e8f0;
+}
+
+:global([data-theme="light"]) .navItem {
+    color: #64748b;
+}
+
+:global([data-theme="light"]) .navItem:hover {
+    background: #e2e8f0;
+    color: #1f2937;
+}
+
+:global([data-theme="light"]) .navItem.active {
+    background: #dbeafe;
+    color: #2563eb;
+    border-right-color: #3b82f6;
+}
+
+:global([data-theme="light"]) .mainPanel {
+    background: #ffffff;
+}
+
+:global([data-theme="light"]) .envList {
+    background: #f8fafc;
+    border-color: #e2e8f0;
+}
+
+:global([data-theme="light"]) .envItem {
+    border-bottom-color: #e2e8f0;
+}
+
+:global([data-theme="light"]) .envKey {
+    color: #475569;
+}
+
+:global([data-theme="light"]) .envInput {
+    background: #ffffff;
+    border-color: #cbd5e1;
+    color: #1f2937;
+}
+
+:global([data-theme="light"]) .envInput:focus {
+    border-color: #3b82f6;
+}
+
+:global([data-theme="light"]) .actionFooter {
+    border-top-color: #e2e8f0;
+}
+
+:global([data-theme="light"]) .saveBtn:disabled {
+    background: #e2e8f0;
+    color: #94a3b8;
+}
+
+:global([data-theme="light"]) .restartBtn {
+    background: #fef2f2;
+    color: #dc2626;
+    border-color: #fecaca;
+}
+
+:global([data-theme="light"]) .restartBtn:hover {
+    background: #fee2e2;
+    color: #b91c1c;
+}
+
+:global([data-theme="light"]) .dbSelect {
+    background: #ffffff;
+    border-color: #cbd5e1;
+    color: #1f2937;
+}
+
+:global([data-theme="light"]) .tableWrapper {
+    border-color: #e2e8f0;
+}
+
+:global([data-theme="light"]) .dataTable th {
+    background: #f1f5f9;
+    color: #475569;
+    border-bottom-color: #e2e8f0;
+}
+
+:global([data-theme="light"]) .dataTable td {
+    background: #ffffff;
+    color: #475569;
+    border-bottom-color: #e2e8f0;
+}
+
+:global([data-theme="light"]) .dataTable tr:hover td {
+    background: #f1f5f9;
+    color: #1f2937;
+}
+
+:global([data-theme="light"]) .themeContainer {
+    background: #f8fafc;
+    border-color: #e2e8f0;
+}
+
+:global([data-theme="light"]) .themeLabel {
+    color: #1f2937;
+}
+
+:global([data-theme="light"]) .themeDescription {
+    color: #64748b;
+}
+
+:global([data-theme="light"]) .themeSelector {
+    background: #e2e8f0;
+}
+
+:global([data-theme="light"]) .themeOption {
+    color: #64748b;
+}
+
+:global([data-theme="light"]) .themeOption:hover {
+    color: #1f2937;
+}
+
+:global([data-theme="light"]) .themeOption.active {
+    background: #ffffff;
+    color: #2563eb;
+}
+
+:global([data-theme="light"]) .toggleContainer {
+    background: #f8fafc;
+    border-color: #e2e8f0;
+}
+
+:global([data-theme="light"]) .toggleLabel {
+    color: #1f2937;
+}
+
+:global([data-theme="light"]) .toggleDescription {
+    color: #64748b;
+}
+
+:global([data-theme="light"]) .toggle {
+    background: #cbd5e1;
+}
+
+:global([data-theme="light"]) .toggle.active {
+    background: #22c55e;
+}
+
+:global([data-theme="light"]) .toggle::after {
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.15);
 }

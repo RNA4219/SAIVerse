@@ -13,18 +13,22 @@ LOGGER = logging.getLogger(__name__)
 
 
 def resolve_uri(
-    uris: List[str],
+    uris,
     max_total_chars: int = 8000,
 ) -> str:
     """Resolve one or more SAIVerse URIs and return their content.
 
     Args:
-        uris: List of saiverse:// URI strings to resolve
+        uris: List of saiverse:// URI strings, or a single comma-separated string
         max_total_chars: Maximum total characters across all resolved contents
 
     Returns:
         Formatted text containing the resolved content of each URI
     """
+    # Accept comma-separated string as well as list
+    if isinstance(uris, str):
+        uris = [u.strip() for u in uris.split(",") if u.strip()]
+
     persona_id = get_active_persona_id()
     manager = get_active_manager()
 

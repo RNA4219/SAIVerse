@@ -1,5 +1,5 @@
 {
-    "name": "meta_deep_work",
+    "name": "deep_work",
     "description": "複数の情報ソースを横断して深く調査し、総合的な回答を生成するオーケストレーター。状況認識→計画立案→タスク実行（Stelis隔離）→結果集約→完了判断→最終出力。",
     "input_schema": [
         {
@@ -9,12 +9,16 @@
     ],
     "context_requirements": {
         "history_depth": "full",
+        "history_balanced": false,
+        "include_internal": false,
         "system_prompt": true,
         "memory_weave": true,
         "working_memory": true,
         "inventory": true,
         "building_items": true,
-        "available_playbooks": false
+        "available_playbooks": false,
+        "visual_context": false,
+        "realtime_context": true
     },
     "router_callable": true,
     "user_selectable": false,
@@ -63,7 +67,11 @@
                                     "description": "実行フェーズ番号（1から）"
                                 }
                             },
-                            "required": ["objective", "depth", "phase"]
+                            "required": [
+                                "objective",
+                                "depth",
+                                "phase"
+                            ]
                         },
                         "description": "調査タスクのリスト"
                     },
@@ -72,7 +80,11 @@
                         "description": "フェーズの総数"
                     }
                 },
-                "required": ["understanding", "research_tasks", "total_phases"]
+                "required": [
+                    "understanding",
+                    "research_tasks",
+                    "total_phases"
+                ]
             },
             "output_key": "plan",
             "next": "init_loop"
@@ -114,7 +126,10 @@
                 "properties": {
                     "has_task": {
                         "type": "string",
-                        "enum": ["true", "false"],
+                        "enum": [
+                            "true",
+                            "false"
+                        ],
                         "description": "該当タスクがあるか"
                     },
                     "objective": {
@@ -130,7 +145,9 @@
                         "description": "調査深度"
                     }
                 },
-                "required": ["has_task"]
+                "required": [
+                    "has_task"
+                ]
             },
             "output_key": "current_task",
             "next": "check_has_task"
@@ -143,10 +160,20 @@
                 "field": "current_task.has_task",
                 "operator": "eq",
                 "cases": {
-                    "true": "stelis_start",
+                    "true": "prepare_research_vars",
                     "default": "next_phase"
                 }
             }
+        },
+        {
+            "id": "prepare_research_vars",
+            "type": "set",
+            "assignments": {
+                "objective": "{current_task.objective}",
+                "context_refs": "{current_task.context_refs}",
+                "depth": "{current_task.depth}"
+            },
+            "next": "stelis_start"
         },
         {
             "id": "stelis_start",
@@ -155,7 +182,7 @@
             "stelis_config": {
                 "window_ratio": 0.7,
                 "max_depth": 2,
-                "chronicle_prompt": "この調査スレッドの結果を簡潔にまとめてください。"
+                "chronicle_prompt": "この調査スレッドで行われた調査の内容と結果を包括的にまとめてください。調査対象、検索で見つかった情報、得られた知見、未解決の点を漏らさず記録してください。"
             },
             "next": "exec_research"
         },
@@ -177,7 +204,7 @@
             "id": "accumulate_result",
             "type": "set",
             "assignments": {
-                "phase_results": "{phase_results}\n\n### タスク{task_index}: {current_task.objective}\n結果: {research_result.summary}\nステータス: {research_result.status} (信頼度: {research_result.confidence})",
+                "phase_results": "{phase_results}\n\n### タスク{task_index}: {current_task.objective}\n結果: {research_result.summary}\nステータス: {research_result.status} (信頼度: {research_result.confidence})\nStelis要約: {stelis_chronicle}",
                 "task_index": "={task_index} + 1",
                 "total_tasks_done": "={total_tasks_done} + 1"
             },
@@ -203,7 +230,10 @@
                 "properties": {
                     "is_complete": {
                         "type": "string",
-                        "enum": ["true", "false"],
+                        "enum": [
+                            "true",
+                            "false"
+                        ],
                         "description": "情報が十分か"
                     },
                     "missing": {
@@ -215,17 +245,31 @@
                         "items": {
                             "type": "object",
                             "properties": {
-                                "objective": {"type": "string"},
-                                "context_refs": {"type": "string"},
-                                "depth": {"type": "string"},
-                                "phase": {"type": "integer"}
+                                "objective": {
+                                    "type": "string"
+                                },
+                                "context_refs": {
+                                    "type": "string"
+                                },
+                                "depth": {
+                                    "type": "string"
+                                },
+                                "phase": {
+                                    "type": "integer"
+                                }
                             },
-                            "required": ["objective", "depth", "phase"]
+                            "required": [
+                                "objective",
+                                "depth",
+                                "phase"
+                            ]
                         },
                         "description": "追加タスク（不十分な場合）"
                     }
                 },
-                "required": ["is_complete"]
+                "required": [
+                    "is_complete"
+                ]
             },
             "output_key": "completion_check",
             "next": "route_completion"
@@ -269,10 +313,18 @@
         },
         {
             "id": "finalize",
-            "type": "subplay",
-            "playbook": "sub_speak_meta",
-            "input_template": "以下の調査結果をもとに、ユーザーの要求に対する最終回答を生成してください。\n\n## ユーザーの要求\n{input}\n\n## 調査計画\n{plan.understanding}\n\n## 全調査結果\n{all_results}\n{phase_results}\n\n## 完了判断\n{completion_check}",
-            "propagate_output": true,
+            "type": "llm",
+            "action": "以下の調査結果をもとに、ユーザーの要求に対する最終回答を生成してください。\n\n## ユーザーの要求\n{input}\n\n## 調査計画\n{plan.understanding}\n\n## 全調査結果\n{all_results}\n{phase_results}\n\n## 完了判断\n{completion_check}",
+            "next": "finalize_log"
+        },
+        {
+            "id": "finalize_log",
+            "type": "memorize",
+            "action": "{last}",
+            "role": "assistant",
+            "tags": [
+                "conversation"
+            ],
             "next": null
         }
     ],

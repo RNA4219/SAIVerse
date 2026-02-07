@@ -28,6 +28,7 @@ class HistoryManager:
         self.building_histories = initial_building_histories if initial_building_histories is not None else {}
         self.memory_adapter = memory_adapter
         self._building_seq_counter: Dict[str, int] = {}
+        self.metabolism_anchor_message_id: Optional[str] = None
 
         self._normalise_building_histories()
 
@@ -35,9 +36,16 @@ class HistoryManager:
         self.memory_adapter = adapter
 
     def _ensure_size_limit(self, log_list: List[Dict[str, str]], path: Path) -> None:
+        count_before = len(log_list)
         while log_list and len(json.dumps(log_list, ensure_ascii=False).encode("utf-8")) > 2000 * 1024:
             removed = log_list.pop(0)
             self._append_to_old_log(path.parent, [removed])
+        removed_count = count_before - len(log_list)
+        if removed_count > 0:
+            LOGGER.info(
+                "[size_limit] Trimmed %d messages from %s (was %d, now %d)",
+                removed_count, path.name, count_before, len(log_list),
+            )
 
     def _append_to_old_log(self, base_dir: Path, msgs: List[Dict[str, str]]) -> None:
         """Append messages to a rotating log under base_dir/old_log."""
@@ -287,6 +295,47 @@ class HistoryManager:
             if len(selected) >= max_messages:
                 break
         return list(reversed(selected))
+
+    def get_history_from_anchor(
+        self,
+        anchor_message_id: str,
+        *,
+        required_tags: Optional[List[str]] = None,
+        pulse_id: Optional[str] = None,
+    ) -> List[Dict[str, str]]:
+        """Retrieves messages from anchor onwards (for metabolism anchor-based retrieval)."""
+        if self.memory_adapter is not None:
+            if not self.memory_adapter.is_ready():
+                LOGGER.debug("SAIMemory adapter not ready for %s; falling back to in-memory", self.persona_id)
+            else:
+                LOGGER.debug(
+                    "Fetching persona history from anchor for %s (anchor=%s)",
+                    self.persona_id,
+                    anchor_message_id,
+                )
+                msgs = self.memory_adapter.persona_messages_from_anchor(
+                    anchor_message_id,
+                    required_tags=required_tags,
+                    pulse_id=pulse_id,
+                )
+                LOGGER.debug(
+                    "SAIMemory returned %d messages from anchor for %s",
+                    len(msgs),
+                    self.persona_id,
+                )
+                return msgs
+
+        # Fallback: scan in-memory messages for anchor and return from there
+        anchor_found = False
+        selected: List[Dict[str, str]] = []
+        for msg in self.messages:
+            if not anchor_found:
+                if msg.get("id") == anchor_message_id:
+                    anchor_found = True
+                else:
+                    continue
+            selected.append(msg)
+        return selected
 
     def get_recent_history_balanced(
         self,

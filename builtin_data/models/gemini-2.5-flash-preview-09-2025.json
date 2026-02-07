@@ -5,9 +5,11 @@
   "context_length": 128000,
   "supports_images": true,
   "pricing": {
-    "input_per_1m_tokens": 0.30,
+    "input_per_1m_tokens": 0.3,
     "cached_input_per_1m_tokens": 0.03,
-    "output_per_1m_tokens": 2.50,
+    "output_per_1m_tokens": 2.5,
     "currency": "USD"
-  }
+  },
+  "default_max_history_messages": 50,
+  "metabolism_keep_messages": 30
 }

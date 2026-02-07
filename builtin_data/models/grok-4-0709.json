@@ -39,5 +39,7 @@
     "cached_input_per_1m_tokens": 0.75,
     "output_per_1m_tokens": 15,
     "currency": "USD"
-  }
+  },
+  "default_max_history_messages": 20,
+  "metabolism_keep_messages": 10
 }

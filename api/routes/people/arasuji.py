@@ -337,7 +337,7 @@ async def regenerate_arasuji_entry(
     conn = _get_arasuji_db(persona_id)
     
     try:
-        new_entry = regenerate_entry(conn, entry_id)
+        new_entry = regenerate_entry(conn, entry_id, persona_id=persona_id)
         
         if not new_entry:
             raise HTTPException(
@@ -503,6 +503,7 @@ def _run_chronicle_generation(
             consolidation_size=consolidation_size,
             include_timestamp=True,
             memopedia_context=memopedia_context,
+            persona_id=persona_id,
         )
 
         # Progress callback

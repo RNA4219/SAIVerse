@@ -250,6 +250,52 @@ def log_llm_response(
     logger.debug("LLM_RESPONSE: %s", json.dumps(entry, ensure_ascii=False))
 
 
+def get_sea_trace_log_path() -> Path:
+    """Get the path to the SEA node execution trace log."""
+    return get_session_log_dir() / "sea_trace.log"
+
+
+def _configure_sea_trace_logger() -> None:
+    """Configure the SEA trace logger for concise node execution tracking."""
+    trace_logger = logging.getLogger("saiverse.sea_trace")
+    trace_logger.setLevel(logging.DEBUG)
+
+    # Remove existing handlers
+    for handler in trace_logger.handlers[:]:
+        trace_logger.removeHandler(handler)
+
+    # Add file handler
+    trace_log_path = get_sea_trace_log_path()
+    file_handler = logging.FileHandler(trace_log_path, encoding="utf-8")
+    file_handler.setLevel(logging.DEBUG)
+    file_handler.setFormatter(logging.Formatter(
+        "%(asctime)s %(message)s",
+        datefmt="%H:%M:%S"
+    ))
+    trace_logger.addHandler(file_handler)
+
+    # Don't propagate to root logger
+    trace_logger.propagate = False
+
+
+def get_sea_trace_logger() -> logging.Logger:
+    """Get the SEA trace logger."""
+    logger = logging.getLogger("saiverse.sea_trace")
+    if not logger.handlers:
+        _configure_sea_trace_logger()
+    return logger
+
+
+def log_sea_trace(playbook: str, node_id: str, node_type: str, detail: str = "") -> None:
+    """Log a concise SEA node execution trace entry.
+
+    Output format: ``HH:MM:SS playbook/node_id [TYPE] detail``
+    """
+    logger = get_sea_trace_logger()
+    truncated = (detail[:300] + "...") if len(detail) > 300 else detail
+    logger.debug("%s/%s [%s] %s", playbook, node_id, node_type.upper(), truncated)
+
+
 def get_timeout_diagnostics_log_path() -> Path:
     """Get the path to the timeout diagnostics log."""
     return get_session_log_dir() / "timeout_diagnostics.log"

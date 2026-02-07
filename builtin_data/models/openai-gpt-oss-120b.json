@@ -35,5 +35,7 @@
       "label": "Max tokens",
       "description": "Upper bound on generated tokens."
     }
-  }
+  },
+  "default_max_history_messages": 50,
+  "metabolism_keep_messages": 30
 }

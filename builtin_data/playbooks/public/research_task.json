@@ -27,12 +27,21 @@
             "description": "タスク番号"
         }
     ],
-    "output_schema": ["research_result"],
+    "output_schema": [
+        "research_result"
+    ],
     "context_requirements": {
-        "history_depth": 0,
-        "system_prompt": false,
+        "history_depth": "5messages",
+        "history_balanced": false,
+        "include_internal": false,
+        "system_prompt": true,
+        "memory_weave": true,
+        "working_memory": false,
         "inventory": false,
-        "building_items": false
+        "building_items": false,
+        "available_playbooks": false,
+        "visual_context": false,
+        "realtime_context": true
     },
     "router_callable": false,
     "user_selectable": false,
@@ -91,7 +100,14 @@
                 "properties": {
                     "source": {
                         "type": "string",
-                        "enum": ["messagelog", "memopedia", "chronicle", "web", "document", "pdf"],
+                        "enum": [
+                            "messagelog",
+                            "memopedia",
+                            "chronicle",
+                            "web",
+                            "document",
+                            "pdf"
+                        ],
                         "description": "選択するソースタイプ"
                     },
                     "rationale": {
@@ -99,7 +115,10 @@
                         "description": "選択理由の簡潔な説明"
                     }
                 },
-                "required": ["source", "rationale"]
+                "required": [
+                    "source",
+                    "rationale"
+                ]
             },
             "output_key": "route_result",
             "next": "prepare_exec"
@@ -145,16 +164,28 @@
                 "properties": {
                     "should_retry": {
                         "type": "string",
-                        "enum": ["yes", "no"],
+                        "enum": [
+                            "yes",
+                            "no"
+                        ],
                         "description": "別ソースで再検索するか"
                     },
                     "alternative_source": {
                         "type": "string",
-                        "enum": ["messagelog", "memopedia", "chronicle", "web", "document", "pdf"],
+                        "enum": [
+                            "messagelog",
+                            "memopedia",
+                            "chronicle",
+                            "web",
+                            "document",
+                            "pdf"
+                        ],
                         "description": "再検索する場合のソース"
                     }
                 },
-                "required": ["should_retry"]
+                "required": [
+                    "should_retry"
+                ]
             },
             "output_key": "fallback_decision",
             "next": "route_fallback"

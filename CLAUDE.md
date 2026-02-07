@@ -365,6 +365,26 @@ SAIVerse/
 - Parses `::act ... ::end` blocks from LLM responses
 - Executes special actions: move, pickup_item, create_persona, summon, dispatch_persona, use_item
 
+## Intent Documents
+
+Each feature/subsystem has an **Intent Document** in `docs/intent/` that describes WHY it was built, what invariants it must maintain, and the design decisions behind it.
+
+### Workflow
+
+1. **Before implementing**: Check if `docs/intent/<feature>.md` exists for the target feature
+2. **If it exists**: Read it before writing any code
+3. **If it doesn't exist**: Create it first using this process:
+   - Read related code to understand the full picture
+   - Draft the document
+   - Interview the user about unclear points
+   - Revise based on the interview
+   - User reviews and gives final feedback → document is finalized
+4. **Then implement** the feature with the intent document as guide
+
+### Purpose
+
+Intent documents record the "why" that code alone cannot express. They prevent well-intentioned changes from violating design assumptions (e.g., increasing Stelis anchor display to 50 messages defeats the purpose of context isolation).
+
 ## Important Conventions
 
 ### Code Changes

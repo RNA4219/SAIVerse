@@ -17,8 +17,13 @@
     "supported": true,
     "default_enabled": true,
     "default_ttl": "5m",
-    "ttl_options": ["5m", "1h"],
+    "ttl_options": [
+      "5m",
+      "1h"
+    ],
     "type": "explicit",
     "min_tokens": 1024
-  }
+  },
+  "default_max_history_messages": 40,
+  "metabolism_keep_messages": 20
 }

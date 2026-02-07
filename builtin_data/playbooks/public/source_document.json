@@ -27,12 +27,21 @@
             "description": "Max search iterations"
         }
     ],
-    "output_schema": ["research_result"],
+    "output_schema": [
+        "research_result"
+    ],
     "context_requirements": {
-        "history_depth": 0,
-        "system_prompt": false,
+        "history_depth": "5messages",
+        "history_balanced": false,
+        "include_internal": false,
+        "system_prompt": true,
+        "memory_weave": true,
+        "working_memory": false,
         "inventory": false,
-        "building_items": false
+        "building_items": false,
+        "available_playbooks": false,
+        "visual_context": false,
+        "realtime_context": true
     },
     "router_callable": false,
     "user_selectable": false,
@@ -67,7 +76,10 @@
                         "description": "Context lines around each match (default: 3)"
                     }
                 },
-                "required": ["item_id", "pattern"]
+                "required": [
+                    "item_id",
+                    "pattern"
+                ]
             },
             "output_key": "search_params",
             "next": "search"
@@ -102,7 +114,9 @@
                         "description": "End line to read (1-based)"
                     }
                 },
-                "required": ["start_line"]
+                "required": [
+                    "start_line"
+                ]
             },
             "output_key": "line_selection",
             "next": "check_lines"
@@ -149,7 +163,11 @@
                 "properties": {
                     "status": {
                         "type": "string",
-                        "enum": ["found", "partial", "not_found"]
+                        "enum": [
+                            "found",
+                            "partial",
+                            "not_found"
+                        ]
                     },
                     "summary": {
                         "type": "string",
@@ -170,18 +188,41 @@
                                 },
                                 "relevance": {
                                     "type": "string",
-                                    "enum": ["high", "medium", "low"]
+                                    "enum": [
+                                        "high",
+                                        "medium",
+                                        "low"
+                                    ]
                                 }
                             },
-                            "required": ["source_ref", "excerpt", "relevance"]
+                            "required": [
+                                "source_ref",
+                                "excerpt",
+                                "relevance"
+                            ]
                         }
                     },
                     "confidence": {
                         "type": "string",
-                        "enum": ["high", "medium", "low"]
+                        "enum": [
+                            "high",
+                            "medium",
+                            "low"
+                        ]
                     }
                 },
-                "required": ["status", "summary", "findings", "confidence"]
+                "required": [
+                    "status",
+                    "summary",
+                    "findings",
+                    "confidence"
+                ]
+            },
+            "memorize": {
+                "tags": [
+                    "internal",
+                    "research"
+                ]
             },
             "output_key": "research_result",
             "next": "check_done"

@@ -66,6 +66,10 @@ def chronicle_search(
         except ValueError:
             return f"(invalid end_date format: {end_date}, expected YYYY-MM-DD)"
 
+    # level=0 means "any level" (used by playbook prompts)
+    if level is not None and level == 0:
+        level = None
+
     if not query and start_time is None and end_time is None and level is None:
         return "(少なくとも query, start_date, end_date, level のいずれかを指定してください)"
 

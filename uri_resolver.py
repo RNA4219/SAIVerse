@@ -205,6 +205,19 @@ class UriResolver:
         """
         parsed = parse_sai_uri(uri, context_persona_id=persona_id)
 
+        # ペルソナスコープURIのアクセス制御: 自分の記憶のみ参照可能
+        if parsed.is_persona_scoped and persona_id and parsed.persona_id != persona_id:
+            LOGGER.warning(
+                "Access denied: persona %s tried to access %s's %s",
+                persona_id, parsed.persona_id, parsed.scheme,
+            )
+            return ResolvedContent(
+                uri=uri,
+                content="(アクセス拒否: 他ペルソナの記憶は参照できません)",
+                content_type="error",
+                metadata={"error": "access_denied", "target_persona": parsed.persona_id},
+            )
+
         handler = self._handlers.get(parsed.scheme)
         if not handler:
             return ResolvedContent(
@@ -287,6 +300,65 @@ class UriResolver:
 
         path = parsed.path_parts
         params = parsed.params
+
+        # saiverse://self/messagelog/msg/recent?depth=N
+        if len(path) >= 2 and path[0] == "msg" and path[1] == "recent":
+            from sai_memory.memory.storage import get_messages_last
+
+            depth = int(params.get("depth", 5))
+            thread_id = self._get_active_thread_id(adapter)
+
+            with adapter._db_lock:
+                msgs = get_messages_last(adapter.conn, thread_id, depth)
+            content = self._format_messages(msgs) if msgs else "(no recent messages)"
+            return ResolvedContent(
+                uri=parsed.raw,
+                content=content,
+                content_type="message_log",
+                metadata={"depth": depth, "count": len(msgs)},
+            )
+
+        # saiverse://self/messagelog/msg?contain=TEXT&window=N
+        if len(path) >= 1 and path[0] == "msg" and "contain" in params:
+            from sai_memory.memory.storage import _row_to_message, get_messages_around
+
+            query_text = params["contain"]
+            window = int(params.get("window", 0))
+            thread_id = self._get_active_thread_id(adapter)
+
+            with adapter._db_lock:
+                cursor = adapter.conn.execute(
+                    "SELECT id, thread_id, role, content, resource_id, created_at, metadata "
+                    "FROM messages WHERE thread_id = ? AND content LIKE ? "
+                    "ORDER BY created_at DESC LIMIT 1",
+                    (thread_id, f"%{query_text}%"),
+                )
+                row = cursor.fetchone()
+
+            if not row:
+                return self._error(parsed.raw, f"Message not found containing: {query_text}")
+
+            msg = _row_to_message(row)
+
+            if window > 0:
+                with adapter._db_lock:
+                    surrounding = get_messages_around(
+                        adapter.conn, thread_id, msg.id, before=window, after=window
+                    )
+                content = self._format_messages(surrounding, highlight_id=msg.id)
+            else:
+                content = self._format_messages([msg])
+
+            return ResolvedContent(
+                uri=parsed.raw,
+                content=content,
+                content_type="message_log" if window > 0 else "message",
+                metadata={
+                    "message_id": msg.id,
+                    "created_at": msg.created_at,
+                    "window": window,
+                },
+            )
 
         # saiverse://self/messagelog/msg/{message_id}
         if len(path) >= 2 and path[0] == "msg":
@@ -451,6 +523,36 @@ class UriResolver:
         path = parsed.path_parts
         params = parsed.params
 
+        # saiverse://self/chronicle/entry?contain=TEXT
+        if len(path) >= 1 and path[0] == "entry" and "contain" in params:
+            from sai_memory.arasuji.storage import search_entries
+
+            query_text = params["contain"]
+            adapter = self._get_adapter(parsed.persona_id)
+            if adapter:
+                with adapter._db_lock:
+                    entries = search_entries(adapter.conn, query_text, limit=1)
+            else:
+                entries = search_entries(conn, query_text, limit=1)
+
+            if not entries:
+                return self._error(parsed.raw, f"Chronicle entry not found containing: {query_text}")
+
+            entry = entries[0]
+            content = self._format_chronicle_entry(entry)
+            return ResolvedContent(
+                uri=parsed.raw,
+                content=content,
+                content_type="chronicle_entry",
+                metadata={
+                    "entry_id": entry.id,
+                    "level": entry.level,
+                    "start_time": entry.start_time,
+                    "end_time": entry.end_time,
+                    "message_count": entry.message_count,
+                },
+            )
+
         # saiverse://self/chronicle/entry/{entry_id}
         if len(path) >= 2 and path[0] == "entry":
             entry_id = path[1]
@@ -548,12 +650,32 @@ class UriResolver:
         # saiverse://item/{item_id}/content
         if len(path) >= 2 and path[1] == "content":
             try:
+                # Read item content directly (no persona check needed for URI resolution)
                 item_service = self.manager.item_service
-                result = item_service.view_item(item_id)
-                if not result:
+                item = item_service.items.get(item_id)
+                if not item:
                     return self._error(parsed.raw, f"Item not found: {item_id}")
 
-                content = result if isinstance(result, str) else str(result)
+                item_type = (item.get("type") or "").lower()
+                file_path_str = item.get("file_path")
+                if not file_path_str:
+                    return self._error(parsed.raw, f"No file path for item: {item_id}")
+
+                file_path = item_service._resolve_file_path(file_path_str)
+                if not file_path.exists():
+                    return self._error(parsed.raw, f"File not found: {file_path}")
+
+                if item_type == "picture":
+                    return ResolvedContent(
+                        uri=parsed.raw,
+                        content=f"/api/info/item/{item_id}",
+                        content_type="image",
+                        metadata={"item_id": item_id, "title": item.get("name", item_id), "type": item_type},
+                    )
+                elif item_type == "document":
+                    content = file_path.read_text(encoding="utf-8")
+                else:
+                    content = f"アイテム: {item.get('name', item_id)} (type: {item_type})"
 
                 # 行範囲フィルタ
                 if "lines" in params:
@@ -562,8 +684,8 @@ class UriResolver:
                 return ResolvedContent(
                     uri=parsed.raw,
                     content=content,
-                    content_type="document_content",
-                    metadata={"item_id": item_id},
+                    content_type="item_content",
+                    metadata={"item_id": item_id, "title": item.get("name", item_id), "type": item_type},
                 )
             except Exception as exc:
                 return self._error(parsed.raw, f"Failed to read item content: {exc}")
@@ -755,6 +877,17 @@ class UriResolver:
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    def _get_active_thread_id(self, adapter) -> str:
+        """adapterからアクティブスレッドIDを取得。"""
+        # SAIMemoryAdapter._thread_id() を引数なしで呼ぶとアクティブスレッドを返す
+        getter = getattr(adapter, "_thread_id", None)
+        if callable(getter):
+            try:
+                return getter()
+            except Exception:
+                pass
+        return f"{adapter.persona_id}:__persona__"
 
     def _get_adapter(self, persona_id: Optional[str]):
         """ペルソナのSAIMemoryAdapterを取得。"""
