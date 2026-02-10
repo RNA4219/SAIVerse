@@ -23,6 +23,7 @@ class ConditionalNext(BaseModel):
 class NodeType(str, Enum):
     LLM = "llm"
     TOOL = "tool"
+    TOOL_CALL = "tool_call"
     SPEAK = "speak"
     THINK = "think"
     MEMORY = "memorize"
@@ -108,6 +109,34 @@ class ToolNodeDef(BaseModel):
     output_keys: Optional[list] = Field(
         default=None,
         description="List of keys to store tuple results. E.g. ['text', 'snippet', 'file_path'] for multi-value tool returns."
+    )
+    next: Optional[str] = None
+    conditional_next: Optional[ConditionalNext] = Field(
+        default=None,
+        description="Conditional routing based on state field. If specified, overrides 'next'."
+    )
+
+
+class ToolCallNodeDef(BaseModel):
+    """Node that dynamically executes a tool chosen by an LLM node.
+
+    Reads the tool name and arguments from state (stored by an LLM node with
+    available_tools + output_keys), looks up the tool in TOOL_REGISTRY, and
+    executes it.  This enables agentic loops where the LLM freely picks tools
+    without per-tool branching in the playbook graph.
+    """
+    id: str
+    type: Literal[NodeType.TOOL_CALL]
+    call_source: str = Field(
+        default="fc",
+        description="State key prefix where the LLM stored the function call. "
+                    "Reads '{call_source}.name' for the tool name and "
+                    "'{call_source}.args' for the arguments dict. "
+                    "Falls back to legacy state keys 'tool_name'/'tool_args' if not found."
+    )
+    output_key: Optional[str] = Field(
+        default=None,
+        description="Key name to store tool result in state for later nodes."
     )
     next: Optional[str] = None
     conditional_next: Optional[ConditionalNext] = Field(
@@ -318,9 +347,9 @@ class StelisEndNodeDef(BaseModel):
 
 
 NodeDef = Union[
-    LLMNodeDef, ToolNodeDef, SpeakNodeDef, ThinkNodeDef, MemorizeNodeDef,
-    SayNodeDef, PassNodeDef, SubPlayNodeDef, SetNodeDef, ExecNodeDef,
-    StelisStartNodeDef, StelisEndNodeDef
+    LLMNodeDef, ToolNodeDef, ToolCallNodeDef, SpeakNodeDef, ThinkNodeDef,
+    MemorizeNodeDef, SayNodeDef, PassNodeDef, SubPlayNodeDef, SetNodeDef,
+    ExecNodeDef, StelisStartNodeDef, StelisEndNodeDef
 ]
 
 class InputParam(BaseModel):
@@ -472,6 +501,10 @@ class PlaybookSchema(BaseModel):
     user_selectable: bool = Field(
         default=False,
         description="If true, this meta playbook can be selected by user in the UI."
+    )
+    dev_only: bool = Field(
+        default=False,
+        description="If true, this playbook is only available when developer mode is enabled."
     )
     nodes: List[NodeDef]
     start_node: str

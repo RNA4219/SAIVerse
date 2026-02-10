@@ -456,21 +456,21 @@ class SAIVerseManager(
         """Get all items in a building that have is_open = True."""
         return self.item_service.get_open_items_in_building(building_id)
 
-    def create_document_item(self, persona_id: str, name: str, description: str, content: str) -> str:
+    def create_document_item(self, persona_id: str, name: str, description: str, content: str, source_context: Optional[str] = None) -> str:
         """Create a new document item and place it in the current building."""
-        return self.item_service.create_document_item(persona_id, name, description, content)
+        return self.item_service.create_document_item(persona_id, name, description, content, source_context=source_context)
 
-    def create_picture_item(self, persona_id: str, name: str, description: str, file_path: str, building_id: Optional[str] = None) -> str:
+    def create_picture_item(self, persona_id: str, name: str, description: str, file_path: str, building_id: Optional[str] = None, source_context: Optional[str] = None) -> str:
         """Create a new picture item and place it in the specified building."""
-        return self.item_service.create_picture_item(persona_id, name, description, file_path, building_id)
+        return self.item_service.create_picture_item(persona_id, name, description, file_path, building_id, source_context=source_context)
 
-    def create_picture_item_for_user(self, name: str, description: str, file_path: str, building_id: str) -> str:
+    def create_picture_item_for_user(self, name: str, description: str, file_path: str, building_id: str, creator_id: Optional[str] = None, source_context: Optional[str] = None) -> str:
         """Create a picture item from user upload and place it in the specified building."""
-        return self.item_service.create_picture_item_for_user(name, description, file_path, building_id)
+        return self.item_service.create_picture_item_for_user(name, description, file_path, building_id, creator_id=creator_id, source_context=source_context)
 
-    def create_document_item_for_user(self, name: str, description: str, file_path: str, building_id: str, is_open: bool = True) -> str:
+    def create_document_item_for_user(self, name: str, description: str, file_path: str, building_id: str, is_open: bool = True, creator_id: Optional[str] = None, source_context: Optional[str] = None) -> str:
         """Create a document item from user upload and place it in the specified building."""
-        return self.item_service.create_document_item_for_user(name, description, file_path, building_id, is_open)
+        return self.item_service.create_document_item_for_user(name, description, file_path, building_id, is_open, creator_id=creator_id, source_context=source_context)
 
     # Note: Persona event methods (_load_persona_event_logs, record_persona_event,
     # get_persona_pending_events, archive_persona_events) are in PersonaEventMixin
@@ -1053,8 +1053,10 @@ class SAIVerseManager(
         owner_id: Optional[str],
         state_json: Optional[str],
         file_path: Optional[str] = None,
+        creator_id: Optional[str] = None,
+        source_context: Optional[str] = None,
     ) -> str:
-        return self.admin.create_item(name, item_type, description, owner_kind, owner_id, state_json, file_path)
+        return self.admin.create_item(name, item_type, description, owner_kind, owner_id, state_json, file_path, creator_id=creator_id, source_context=source_context)
 
     def update_item(
         self,

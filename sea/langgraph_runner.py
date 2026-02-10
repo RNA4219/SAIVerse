@@ -28,6 +28,7 @@ def compile_playbook(
     set_node_factory: Optional[Callable[[Any], Callable[[dict], Any]]] = None,
     stelis_start_node_factory: Optional[Callable[[Any], Callable[[dict], Any]]] = None,
     stelis_end_node_factory: Optional[Callable[[Any], Callable[[dict], Any]]] = None,
+    tool_call_node_factory: Optional[Callable[[Any], Callable[[dict], Any]]] = None,
 ) -> Optional[Callable[[dict], Any]]:
     """Compile a PlaybookSchema into a LangGraph runnable coroutine.
 
@@ -58,6 +59,11 @@ def compile_playbook(
                 graph.add_node(node_def.id, llm_node_factory(node_def))
             elif node_def.type == NodeType.TOOL:
                 graph.add_node(node_def.id, tool_node_factory(node_def))
+            elif node_def.type == NodeType.TOOL_CALL and tool_call_node_factory is not None:
+                graph.add_node(node_def.id, tool_call_node_factory(node_def))
+            elif node_def.type == NodeType.TOOL_CALL and tool_call_node_factory is None:
+                logger.error("[langgraph] Cannot add TOOL_CALL node '%s': tool_call_node_factory is None", node_def.id)
+                return None
             elif node_def.type == NodeType.SPEAK:
                 graph.add_node(node_def.id, speak_node)
             elif node_def.type == NodeType.SAY and say_node_factory is not None:

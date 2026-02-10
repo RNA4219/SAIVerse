@@ -92,14 +92,18 @@ def reload_models():
     }
 
 @router.get("/playbooks", response_model=List[PlaybookInfo])
-def get_playbooks():
+def get_playbooks(manager=Depends(get_manager)):
     """List available user-selectable playbooks with input_schema."""
     from database.session import SessionLocal
     from database.models import Playbook
 
+    developer_mode = manager.state.developer_mode
     db = SessionLocal()
     try:
-        playbooks = db.query(Playbook).filter(Playbook.user_selectable == True).all()
+        query = db.query(Playbook).filter(Playbook.user_selectable == True)
+        if not developer_mode:
+            query = query.filter(Playbook.dev_only == False)
+        playbooks = query.all()
         result = []
         for pb in playbooks:
             # Parse schema_json to get input_schema
@@ -387,6 +391,50 @@ def get_global_auto(manager = Depends(get_manager)):
 def set_global_auto(req: GlobalAutoRequest, manager = Depends(get_manager)):
     """Set global autonomous mode status."""
     manager.state.global_auto_enabled = req.enabled
+    return {"success": True, "enabled": req.enabled}
+
+
+class DeveloperModeRequest(BaseModel):
+    enabled: bool
+
+
+@router.get("/developer-mode")
+def get_developer_mode(manager=Depends(get_manager)):
+    """Get developer mode status."""
+    return {"enabled": manager.state.developer_mode}
+
+
+@router.post("/developer-mode")
+def set_developer_mode(req: DeveloperModeRequest, manager=Depends(get_manager)):
+    """Set developer mode status.
+
+    When turning OFF, also disables global auto mode and
+    sets all personas' interaction_mode to 'manual'.
+    """
+    manager.state.developer_mode = req.enabled
+
+    if not req.enabled:
+        # Disable global auto mode
+        manager.state.global_auto_enabled = False
+
+        # Set all personas to manual mode
+        from database.session import SessionLocal
+        from database.models import AI
+        db = SessionLocal()
+        try:
+            db.query(AI).update({AI.INTERACTION_MODE: "manual"})
+            db.commit()
+        except Exception:
+            _log.warning("Failed to reset interaction modes", exc_info=True)
+            db.rollback()
+        finally:
+            db.close()
+
+        # Update in-memory persona objects
+        for persona in manager.state.personas.values():
+            if hasattr(persona, "interaction_mode"):
+                persona.interaction_mode = "manual"
+
     return {"success": True, "enabled": req.enabled}
 
 

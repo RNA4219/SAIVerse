@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect, KeyboardEvent, ChangeEvent, useCallback } from 'react';
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import remarkBreaks from 'remark-breaks';
+import remarkGfm from 'remark-gfm';
 import rehypeRaw from 'rehype-raw';
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
 import styles from './page.module.css';
@@ -138,6 +139,7 @@ export default function Home() {
     const [isInfoOpen, setIsInfoOpen] = useState(false); // Default closed to prevent mobile flash
     const [moveTrigger, setMoveTrigger] = useState(0); // To trigger RightSidebar refresh
     const [copiedMessageId, setCopiedMessageId] = useState<string | null>(null); // Track which message was copied
+    const [usageTooltipId, setUsageTooltipId] = useState<string | null>(null); // Track which message's usage tooltip is open
 
     // ItemModal for saiverse:// item links
     const [linkItemModalItem, setLinkItemModalItem] = useState<{ id: string; name: string; description?: string; type: string } | null>(null);
@@ -233,7 +235,7 @@ export default function Home() {
         adjustTextareaHeight();
     }, [inputValue, adjustTextareaHeight]);
     const [isPeopleModalOpen, setIsPeopleModalOpen] = useState(false);
-    const [selectedPlaybook, setSelectedPlaybook] = useState<string | null>(null);
+    const [selectedPlaybook, setSelectedPlaybook] = useState<string | null>('meta_user');
     const [playbookParams, setPlaybookParams] = useState<Record<string, any>>({});
     const [selectedModel, setSelectedModel] = useState<string>(''); // Model ID selected in Chat Options
     const [selectedModelDisplayName, setSelectedModelDisplayName] = useState<string>(''); // Model display name
@@ -258,6 +260,9 @@ export default function Home() {
     // Startup warnings
     const [startupWarnings, setStartupWarnings] = useState<string[]>([]);
     const [showStartupWarnings, setShowStartupWarnings] = useState(false);
+
+    // Toast notifications
+    const [toasts, setToasts] = useState<{id: string; content: string}[]>([]);
     const swipeStartX = useRef<number | null>(null);
     const swipeStartY = useRef<number | null>(null);
     const swipeStartTime = useRef<number | null>(null);
@@ -857,13 +862,21 @@ export default function Home() {
                                 setLoadingStatus('Thinking...');
                             }
                         } else if (event.type === 'warning') {
-                            setMessages(prev => [...prev, {
-                                role: 'system',
-                                content: event.content || '',
-                                isWarning: true,
-                                warningCode: event.warning_code,
-                                timestamp: new Date().toISOString()
-                            }]);
+                            if (event.display === 'toast') {
+                                const id = `toast-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+                                setToasts(prev => [...prev, { id, content: event.content || '' }]);
+                                setTimeout(() => {
+                                    setToasts(prev => prev.filter(t => t.id !== id));
+                                }, 5000);
+                            } else {
+                                setMessages(prev => [...prev, {
+                                    role: 'system',
+                                    content: event.content || '',
+                                    isWarning: true,
+                                    warningCode: event.warning_code,
+                                    timestamp: new Date().toISOString()
+                                }]);
+                            }
                         } else if (event.response) {
                             setMessages(prev => [...prev, { role: 'assistant', content: event.response }]);
                         }
@@ -948,6 +961,14 @@ export default function Home() {
         document.addEventListener('mousedown', handleClickOutside);
         return () => document.removeEventListener('mousedown', handleClickOutside);
     }, [showPlusMenu]);
+
+    // Close usage tooltip when tapping outside
+    useEffect(() => {
+        if (!usageTooltipId) return;
+        const handleClickOutside = () => setUsageTooltipId(null);
+        document.addEventListener('mousedown', handleClickOutside);
+        return () => document.removeEventListener('mousedown', handleClickOutside);
+    }, [usageTooltipId]);
 
     const handleContextPreview = async () => {
         setShowPlusMenu(false);
@@ -1216,7 +1237,7 @@ export default function Home() {
                                                 </details>
                                             )}
                                             <ReactMarkdown
-                                                remarkPlugins={[remarkBreaks]}
+                                                remarkPlugins={[remarkGfm, remarkBreaks]}
                                                 rehypePlugins={[rehypeRaw, [rehypeSanitize, sanitizeSchema]]}
                                                 urlTransform={(url) => url.startsWith('saiverse://') ? url : defaultUrlTransform(url)}
                                                 components={{
@@ -1231,13 +1252,34 @@ export default function Home() {
                                         {msg.timestamp && <span>{new Date(msg.timestamp).toLocaleString()}</span>}
                                         {msg.llm_usage_total && msg.llm_usage_total.call_count > 1 ? (
                                             // Show total usage when multiple LLM calls were made
-                                            <span className={styles.llmUsage} title={`Models: ${msg.llm_usage_total.models_used.join(', ')}\nLLM Calls: ${msg.llm_usage_total.call_count}\nTotal Input: ${msg.llm_usage_total.total_input_tokens.toLocaleString()} tokens${msg.llm_usage_total.total_cached_tokens ? ` (${msg.llm_usage_total.total_cached_tokens.toLocaleString()} cached)` : ''}\nTotal Output: ${msg.llm_usage_total.total_output_tokens.toLocaleString()} tokens\nTotal Cost: $${msg.llm_usage_total.total_cost_usd.toFixed(4)}`}>
-                                                {msg.llm_usage_total.call_count} calls · {(msg.llm_usage_total.total_input_tokens + msg.llm_usage_total.total_output_tokens).toLocaleString()} tokens · ${msg.llm_usage_total.total_cost_usd.toFixed(4)}
+                                            <span className={styles.llmUsageWrap}>
+                                                <span className={styles.llmUsage} onClick={(e) => { e.stopPropagation(); setUsageTooltipId(prev => prev === (msg.id || `msg-${idx}`) ? null : (msg.id || `msg-${idx}`)); }}>
+                                                    {msg.llm_usage_total.call_count} calls · {(msg.llm_usage_total.total_input_tokens + msg.llm_usage_total.total_output_tokens).toLocaleString()} tokens · ${msg.llm_usage_total.total_cost_usd.toFixed(4)}
+                                                </span>
+                                                {usageTooltipId === (msg.id || `msg-${idx}`) && (
+                                                    <div className={styles.usageTooltip}>
+                                                        <div>Models: {msg.llm_usage_total.models_used.join(', ')}</div>
+                                                        <div>LLM Calls: {msg.llm_usage_total.call_count}</div>
+                                                        <div>Total Input: {msg.llm_usage_total.total_input_tokens.toLocaleString()} tokens{msg.llm_usage_total.total_cached_tokens ? ` (${msg.llm_usage_total.total_cached_tokens.toLocaleString()} cached)` : ''}</div>
+                                                        <div>Total Output: {msg.llm_usage_total.total_output_tokens.toLocaleString()} tokens</div>
+                                                        <div>Total Cost: ${msg.llm_usage_total.total_cost_usd.toFixed(4)}</div>
+                                                    </div>
+                                                )}
                                             </span>
                                         ) : msg.llm_usage && (
                                             // Show single call usage
-                                            <span className={styles.llmUsage} title={`Model: ${msg.llm_usage.model}\nInput: ${msg.llm_usage.input_tokens.toLocaleString()} tokens${msg.llm_usage.cached_tokens ? ` (${msg.llm_usage.cached_tokens.toLocaleString()} cached)` : ''}\nOutput: ${msg.llm_usage.output_tokens.toLocaleString()} tokens\nCost: $${(msg.llm_usage.cost_usd || 0).toFixed(4)}`}>
-                                                {msg.llm_usage.model_display_name || msg.llm_usage.model} · {(msg.llm_usage.input_tokens + msg.llm_usage.output_tokens).toLocaleString()} tokens
+                                            <span className={styles.llmUsageWrap}>
+                                                <span className={styles.llmUsage} onClick={(e) => { e.stopPropagation(); setUsageTooltipId(prev => prev === (msg.id || `msg-${idx}`) ? null : (msg.id || `msg-${idx}`)); }}>
+                                                    {msg.llm_usage.model_display_name || msg.llm_usage.model} · {(msg.llm_usage.input_tokens + msg.llm_usage.output_tokens).toLocaleString()} tokens
+                                                </span>
+                                                {usageTooltipId === (msg.id || `msg-${idx}`) && (
+                                                    <div className={styles.usageTooltip}>
+                                                        <div>Model: {msg.llm_usage.model}</div>
+                                                        <div>Input: {msg.llm_usage.input_tokens.toLocaleString()} tokens{msg.llm_usage.cached_tokens ? ` (${msg.llm_usage.cached_tokens.toLocaleString()} cached)` : ''}</div>
+                                                        <div>Output: {msg.llm_usage.output_tokens.toLocaleString()} tokens</div>
+                                                        <div>Cost: ${(msg.llm_usage.cost_usd || 0).toFixed(4)}</div>
+                                                    </div>
+                                                )}
                                             </span>
                                         )}
                                     </div>
@@ -1431,6 +1473,24 @@ export default function Home() {
                         window.location.reload();
                     }}
                 />
+            )}
+
+            {/* Toast notifications */}
+            {toasts.length > 0 && (
+                <div className={styles.toastContainer}>
+                    {toasts.map(toast => (
+                        <div key={toast.id} className={styles.toast}>
+                            <AlertTriangle size={16} />
+                            <span>{toast.content}</span>
+                            <button
+                                className={styles.toastClose}
+                                onClick={() => setToasts(prev => prev.filter(t => t.id !== toast.id))}
+                            >
+                                <X size={14} />
+                            </button>
+                        </div>
+                    ))}
+                </div>
             )}
         </div>
     );

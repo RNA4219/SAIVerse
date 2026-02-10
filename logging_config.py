@@ -347,13 +347,14 @@ def get_sea_trace_logger() -> logging.Logger:
 
 
 def log_sea_trace(playbook: str, node_id: str, node_type: str, detail: str = "") -> None:
-    """Log a concise SEA node execution trace entry.
+    """Log a SEA node execution trace entry.
 
     Output format: ``HH:MM:SS playbook/node_id [TYPE] detail``
+
+    No truncation — sea_trace.log is a file-only logger, not console.
     """
     logger = get_sea_trace_logger()
-    truncated = (detail[:300] + "...") if len(detail) > 300 else detail
-    logger.debug("%s/%s [%s] %s", playbook, node_id, node_type.upper(), truncated)
+    logger.debug("%s/%s [%s] %s", playbook, node_id, node_type.upper(), detail)
 
 
 def get_timeout_diagnostics_log_path() -> Path:

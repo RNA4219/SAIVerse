@@ -110,10 +110,9 @@ export default function PersonaWizard({ isOpen, onClose, onComplete }: PersonaWi
                 }),
             });
 
-            const text = await res.text();
-
-            if (text.startsWith('Error:')) {
-                setError(text);
+            if (!res.ok) {
+                const err = await res.json().catch(() => ({ detail: res.statusText }));
+                setError(err.detail || '不明なエラーが発生しました');
                 return;
             }
 

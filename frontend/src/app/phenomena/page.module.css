@@ -65,7 +65,7 @@
 }
 
 .createBtn {
-    background: #4f46e5;
+    background: #06b6d4;
     color: white;
     border: none;
     padding: 0.5rem 1rem;
@@ -79,7 +79,7 @@
 }
 
 .createBtn:hover {
-    background: #4338ca;
+    background: #0891b2;
 }
 
 .table {
@@ -203,8 +203,8 @@
 .formSelect:focus,
 .formTextarea:focus {
     outline: none;
-    border-color: #6366f1;
-    box-shadow: 0 0 0 2px rgba(99, 102, 241, 0.2);
+    border-color: #06b6d4;
+    box-shadow: 0 0 0 2px rgba(6, 182, 212, 0.2);
 }
 
 .formTextarea {
@@ -245,7 +245,7 @@
 }
 
 .saveBtn {
-    background: #4f46e5;
+    background: #06b6d4;
     color: white;
     border: none;
     padding: 0.5rem 1.5rem;
@@ -255,7 +255,7 @@
 }
 
 .saveBtn:hover {
-    background: #4338ca;
+    background: #0891b2;
 }
 
 .saveBtn:disabled {

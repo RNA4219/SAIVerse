@@ -239,7 +239,7 @@ def apply_edits(content: str, edits: List[Dict[str, str]]) -> str:
             if target and target in result:
                 result = result.replace(target, target + insert_content, 1)
             else:
-                LOGGER.warning(f"Target not found for append_after: {target[:50] if target else '(empty)'}...")
+                LOGGER.warning(f"Target not found for append_after: {target if target else '(empty)'}")
                 # Fallback: append at end
                 result = result + "\n" + insert_content
 
@@ -247,7 +247,7 @@ def apply_edits(content: str, edits: List[Dict[str, str]]) -> str:
             if target and target in result:
                 result = result.replace(target, insert_content, 1)
             else:
-                LOGGER.warning(f"Target not found for replace: {target[:50] if target else '(empty)'}...")
+                LOGGER.warning(f"Target not found for replace: {target if target else '(empty)'}")
 
         elif operation == "append_end":
             if insert_content:
@@ -338,17 +338,17 @@ def refine_page_content(
         if not edits:
             LOGGER.info(f"No edits needed for {title}")
             if new_summary != summary:
-                LOGGER.info(f"  Summary updated: {new_summary[:50]}...")
+                LOGGER.info(f"  Summary updated: {new_summary}")
             if new_keywords != keywords:
                 LOGGER.info(f"  Keywords updated: {new_keywords}")
             return existing_content, new_summary, new_keywords
 
         LOGGER.info(f"Applying {len(edits)} edit(s) to {title}")
         for edit in edits:
-            LOGGER.debug(f"  Edit: {edit.get('operation')} - {str(edit)[:80]}...")
+            LOGGER.debug(f"  Edit: {edit.get('operation')} - {str(edit)}")
 
         if new_summary != summary:
-            LOGGER.info(f"  Summary updated: {new_summary[:50]}...")
+            LOGGER.info(f"  Summary updated: {new_summary}")
         if new_keywords != keywords:
             LOGGER.info(f"  Keywords updated: {new_keywords}")
 
@@ -527,7 +527,7 @@ def extract_knowledge(
 
                 except json.JSONDecodeError as e:
                     LOGGER.warning(f"Failed to parse JSON response: {e}")
-                    LOGGER.debug(f"Response text: {text[:500]}")
+                    LOGGER.debug(f"Response text: {text}")
                     if attempt < max_retries:
                         LOGGER.info(f"Retrying ({attempt + 1}/{max_retries})...")
                         continue
@@ -592,7 +592,7 @@ def apply_pages_to_memopedia(
             # Append to existing page
             if dry_run:
                 LOGGER.info(f"[DRY RUN] Would append to existing page: {title}")
-                LOGGER.info(f"  New content preview: {content[:200]}...")
+                LOGGER.info(f"  New content: {content}")
             else:
                 if client:
                     # Refine mode: use LLM to integrate new content naturally
@@ -621,7 +621,7 @@ def apply_pages_to_memopedia(
             if dry_run:
                 LOGGER.info(f"[DRY RUN] Would create new page: [{category}] {title}")
                 LOGGER.info(f"  Summary: {summary}")
-                LOGGER.info(f"  Content preview: {content[:200]}...")
+                LOGGER.info(f"  Content: {content}")
             else:
                 page_keywords = page_data.get("keywords", [])
                 memopedia.create_page(

@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from tools.context import get_active_manager, get_active_persona_id
+import json as _json
+
+from tools.context import get_active_manager, get_active_persona_id, get_active_playbook_name
 from tools.core import ToolSchema
 
 
@@ -24,7 +26,9 @@ def document_create(name: str, description: str, content: str) -> str:
     if manager is None:
         raise RuntimeError("Manager context is not available; document_create cannot be executed.")
 
-    return manager.create_document_item(persona_id, name, description, content)
+    playbook_name = get_active_playbook_name()
+    source_context = _json.dumps({"playbook": playbook_name, "tool": "document_create"})
+    return manager.create_document_item(persona_id, name, description, content, source_context=source_context)
 
 
 def schema() -> ToolSchema:

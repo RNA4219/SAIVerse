@@ -1,39 +1,34 @@
 {
     "name": "web_search_step",
-    "description": "Web検索の1イテレーション。クエリ生成→検索→ページ選択→読み込み→要約。サブエージェントで実行されることを想定。",
+    "description": "Web検索ループ。クエリ生成→検索→ページ読み→要約→記録→十分か判定を繰り返し、最終的に全結果を構造化して返す。サブエージェントで実行されることを想定。",
     "input_schema": [
         {
             "name": "input",
             "description": "調査トピック"
-        },
-        {
-            "name": "previous_findings",
-            "param_type": "string",
-            "source": "parent.all_findings",
-            "description": "これまでの調査結果（前回までのChronicle蓄積）",
-            "required": false,
-            "default": ""
-        },
-        {
-            "name": "known_sources",
-            "param_type": "string",
-            "source": "parent.known_sources",
-            "description": "既に調べたソースURL一覧",
-            "required": false,
-            "default": ""
         }
     ],
     "output_schema": [
-        "step_summary"
+        "research_findings"
     ],
     "router_callable": false,
     "user_selectable": false,
     "nodes": [
         {
+            "id": "init",
+            "type": "set",
+            "assignments": {
+                "iterations": 0,
+                "max_iterations": 5,
+                "known_sources": "",
+                "accumulated_findings": ""
+            },
+            "next": "build_query"
+        },
+        {
             "id": "build_query",
             "type": "llm",
             "context_profile": "worker_light",
-            "action": "調査トピック「{input}」についてWeb検索クエリを生成してください。\n\nこれまでの調査結果:\n{previous_findings}\n\n情報がまだない場合は基本的な検索から、既にある場合は不足している観点を補う検索を行ってください。",
+            "action": "調査トピック「{input}」についてWeb検索クエリを生成してください。\n\n既に調べたソース:\n{known_sources}\n\nイテレーション: {iterations}/{max_iterations}\n\n情報がまだない場合は基本的な検索から、既にある場合は不足している観点を補う検索を行ってください。",
             "response_schema": {
                 "type": "object",
                 "properties": {
@@ -48,6 +43,12 @@
                 },
                 "required": [
                     "query"
+                ]
+            },
+            "memorize": {
+                "tags": [
+                    "internal",
+                    "research"
                 ]
             },
             "output_key": "search_args",
@@ -86,6 +87,12 @@
                 ]
             },
             "output_key": "selected_page",
+            "memorize": {
+                "tags": [
+                    "internal",
+                    "research"
+                ]
+            },
             "next": "read_page"
         },
         {
@@ -125,12 +132,95 @@
                 },
                 "required": [
                     "summary",
+                    "key_facts",
                     "source_url"
                 ]
             },
             "output_key": "step_summary",
+            "memorize": {
+                "tags": [
+                    "internal",
+                    "research"
+                ]
+            },
+            "next": "track_source"
+        },
+        {
+            "id": "track_source",
+            "type": "set",
+            "assignments": {
+                "known_sources": "{known_sources}\n{step_summary.source_url}",
+                "iterations": "={iterations} + 1",
+                "accumulated_findings": "{accumulated_findings}\n\n---\nソース: {step_summary.source_url}\n要約: {step_summary.summary}\n重要事実: {step_summary.key_facts}"
+            },
+            "next": "check_done"
+        },
+        {
+            "id": "check_done",
+            "type": "llm",
+            "context_profile": "worker_light",
+            "action": "調査トピック「{input}」について、これまでの検索で得られた情報が十分かどうか判断してください。\n\nイテレーション: {iterations}/{max_iterations}\n\n以下を考慮して判断:\n- トピックの主要な側面がカバーされているか\n- 信頼できる情報源から情報が得られているか\n- レポートを書くのに十分な具体的情報があるか",
+            "response_schema": {
+                "type": "object",
+                "properties": {
+                    "is_sufficient": {
+                        "type": "string",
+                        "enum": [
+                            "true",
+                            "false"
+                        ],
+                        "description": "情報が十分かどうか"
+                    },
+                    "missing_aspects": {
+                        "type": "string",
+                        "description": "不足している観点（あれば）"
+                    }
+                },
+                "required": [
+                    "is_sufficient"
+                ]
+            },
+            "output_key": "sufficiency_check",
+            "memorize": {
+                "tags": [
+                    "internal",
+                    "research"
+                ]
+            },
+            "next": "decide_continue"
+        },
+        {
+            "id": "decide_continue",
+            "type": "pass",
+            "conditional_next": {
+                "field": "sufficiency_check.is_sufficient",
+                "operator": "eq",
+                "cases": {
+                    "true": "finalize",
+                    "default": "check_loop_limit"
+                }
+            }
+        },
+        {
+            "id": "check_loop_limit",
+            "type": "pass",
+            "conditional_next": {
+                "field": "iterations",
+                "operator": "gte",
+                "cases": {
+                    "{max_iterations}": "finalize",
+                    "default": "build_query"
+                }
+            }
+        },
+        {
+            "id": "finalize",
+            "type": "set",
+            "assignments": {
+                "research_findings": "## 調査トピック: {input}\nイテレーション: {iterations}回\n調査済みソース: {known_sources}\n{accumulated_findings}"
+            },
             "next": null
         }
     ],
-    "start_node": "build_query"
+    "start_node": "init"
 }

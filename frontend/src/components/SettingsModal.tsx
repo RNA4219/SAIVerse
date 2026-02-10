@@ -51,6 +51,7 @@ export default function SettingsModal({ isOpen, onClose, personaId }: SettingsMo
     const [isLoading, setIsLoading] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
     const [autonomousStatus, setAutonomousStatus] = useState<AutonomousStatus | null>(null);
+    const [developerMode, setDeveloperMode] = useState(false);
 
     // Form state
     const [description, setDescription] = useState('');
@@ -66,6 +67,10 @@ export default function SettingsModal({ isOpen, onClose, personaId }: SettingsMo
         if (isOpen) {
             loadModels();
             loadUsers();
+            fetch('/api/config/developer-mode')
+                .then(res => res.ok ? res.json() : null)
+                .then(data => { if (data) setDeveloperMode(data.enabled); })
+                .catch(() => {});
         }
     }, [isOpen]);
 
@@ -226,34 +231,36 @@ export default function SettingsModal({ isOpen, onClose, personaId }: SettingsMo
                                 <div className={styles.description}>該当する場合、より高速で安価なレスポンスに使用されます。</div>
                             </div>
 
-                            <div className={styles.fieldGroup}>
-                                <label className={styles.label}>インタラクションモード</label>
-                                <select
-                                    className={styles.select}
-                                    value={interactionMode}
-                                    onChange={(e) => setInteractionMode(e.target.value)}
-                                >
-                                    {INTERACTION_MODES.map(m => (
-                                        <option key={m.value} value={m.value}>{m.label}</option>
-                                    ))}
-                                </select>
-                                {autonomousStatus && (
-                                    <div className={styles.description} style={{
-                                        marginTop: '0.5rem',
-                                        padding: '0.5rem',
-                                        background: autonomousStatus.is_active ? 'rgba(0, 200, 0, 0.1)' : 'rgba(100, 100, 100, 0.1)',
-                                        borderRadius: '4px'
-                                    }}>
-                                        {autonomousStatus.is_active ? (
-                                            <span>✅ <strong>自律モードアクティブ</strong> - このペルソナは自発的に発言します。</span>
-                                        ) : autonomousStatus.system_running ? (
-                                            <span>⏸️ 自律システムは動作中ですが、このペルソナは {interactionMode} モードです。</span>
-                                        ) : (
-                                            <span>⚠️ 自律システムは動作していません。</span>
-                                        )}
-                                    </div>
-                                )}
-                            </div>
+                            {developerMode && (
+                                <div className={styles.fieldGroup}>
+                                    <label className={styles.label}>インタラクションモード</label>
+                                    <select
+                                        className={styles.select}
+                                        value={interactionMode}
+                                        onChange={(e) => setInteractionMode(e.target.value)}
+                                    >
+                                        {INTERACTION_MODES.map(m => (
+                                            <option key={m.value} value={m.value}>{m.label}</option>
+                                        ))}
+                                    </select>
+                                    {autonomousStatus && (
+                                        <div className={styles.description} style={{
+                                            marginTop: '0.5rem',
+                                            padding: '0.5rem',
+                                            background: autonomousStatus.is_active ? 'rgba(0, 200, 0, 0.1)' : 'rgba(100, 100, 100, 0.1)',
+                                            borderRadius: '4px'
+                                        }}>
+                                            {autonomousStatus.is_active ? (
+                                                <span>✅ <strong>自律モードアクティブ</strong> - このペルソナは自発的に発言します。</span>
+                                            ) : autonomousStatus.system_running ? (
+                                                <span>⏸️ 自律システムは動作中ですが、このペルソナは {interactionMode} モードです。</span>
+                                            ) : (
+                                                <span>⚠️ 自律システムは動作していません。</span>
+                                            )}
+                                        </div>
+                                    )}
+                                </div>
+                            )}
 
                             <div className={styles.fieldGroup}>
                                 <label className={styles.label}>リンクユーザー</label>

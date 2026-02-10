@@ -307,7 +307,7 @@ def generate_image(
     Returns:
         Tuple of (text, ToolResult, file_path, metadata)
     """
-    from tools.context import get_active_manager, get_active_persona_id
+    from tools.context import get_active_manager, get_active_persona_id, get_active_playbook_name
 
     # Normalize empty strings to defaults
     if not aspect_ratio:
@@ -375,12 +375,16 @@ def generate_image(
         item_text = ""
 
         if persona_id and manager:
+            import json as _json
+            playbook_name = get_active_playbook_name()
+            _source_context = _json.dumps({"playbook": playbook_name, "tool": "generate_image"})
             item_name = title if title else f"生成画像_{stored_path.stem}"
             item_id = manager.create_picture_item(
                 persona_id=persona_id,
                 name=item_name,
                 description=prompt,
                 file_path=str(stored_path),
+                source_context=_source_context,
             )
             item_text = f"\n\n画像をアイテムとして登録しました（アイテムID: {item_id}）。"
     except Exception as exc:

@@ -1,7 +1,7 @@
 :root {
   --background: #fdfdfd;
   --foreground: #171717;
-  --primary: #6366f1;
+  --primary: #06b6d4;
   --primary-foreground: #ffffff;
   /* Semantic tokens for components using CSS variables */
   --bg-secondary: #f8fafc;
@@ -10,7 +10,7 @@
   --border-color: #e2e8f0;
   --text-primary: #1f2937;
   --text-secondary: #64748b;
-  --accent-primary: #6366f1;
+  --accent-primary: #06b6d4;
 }
 
 [data-theme="dark"] {
@@ -22,7 +22,7 @@
   --border-color: #374151;
   --text-primary: #f3f4f6;
   --text-secondary: #9ca3af;
-  --accent-primary: #6366f1;
+  --accent-primary: #06b6d4;
 }
 
 body {

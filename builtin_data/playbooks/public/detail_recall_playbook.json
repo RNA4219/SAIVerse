@@ -18,27 +18,14 @@
         "recall_result",
         "messages"
     ],
-    "context_requirements": {
-        "history_depth": 10,
-        "history_balanced": false,
-        "include_internal": false,
-        "system_prompt": true,
-        "memory_weave": true,
-        "working_memory": false,
-        "inventory": false,
-        "building_items": false,
-        "available_playbooks": false,
-        "visual_context": false,
-        "realtime_context": true
-    },
     "router_callable": false,
     "user_selectable": false,
     "nodes": [
         {
             "id": "decide_params",
             "type": "llm",
-            "action": "あなたはメモリ想起アシスタントです。ユーザーのリクエストに基づいて、detail_recallツールのパラメータを決定してください。\n\n可能なパラメータ:\n- summary_uuid: 要約のUUID（最初の8文字でOK）\n- expand_before_minutes: 何分前まで範囲を拡張するか（0-120）\n- expand_after_minutes: 何分後まで範囲を拡張するか（0-120）\n\n「もうちょっと前」→ expand_before_minutes: 30\n「もうちょっと後」→ expand_after_minutes: 30\n「もっと詳しく」→ expand_before_minutes: 15, expand_after_minutes: 15",
-            "model_type": "lightweight",
+            "context_profile": "router",
+            "action": "detail_recallツールのパラメータを決定してください。結果はdetail_recallツールに渡されます。\n\n可能なパラメータ:\n- summary_uuid: 要約のUUID（最初の8文字でOK）\n- expand_before_minutes: 何分前まで範囲を拡張するか（0-120）\n- expand_after_minutes: 何分後まで範囲を拡張するか（0-120）\n\n「もうちょっと前」→ expand_before_minutes: 30\n「もうちょっと後」→ expand_after_minutes: 30\n「もっと詳しく」→ expand_before_minutes: 15, expand_after_minutes: 15",
             "response_schema": {
                 "type": "object",
                 "properties": {
@@ -79,7 +66,8 @@
             "role": "assistant",
             "tags": [
                 "internal",
-                "recall"
+                "detail_recall",
+                "playbook_result"
             ],
             "metadata_key": "recall_result",
             "next": null

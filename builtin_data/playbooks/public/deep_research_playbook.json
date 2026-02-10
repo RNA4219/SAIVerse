@@ -1,117 +1,87 @@
 {
     "name": "deep_research",
     "display_name": "深い調査",
-    "description": "トピックについて深く調査し、複数の情報源から情報を収集してレポートドキュメントを作成する。各検索イテレーションをサブエージェントで実行し、Chronicleで結果を蓄積する。",
+    "description": "トピックについて深く調査し、複数の情報源から情報を収集してレポートドキュメントを作成する。ペルソナの知識を活用して調査計画を立て、Web検索ループをサブエージェントで実行し、構造化された調査結果からレポートを生成する。",
     "input_schema": [
         {
             "name": "input",
             "description": "調査したいトピックや質問"
         }
     ],
-    "context_requirements": {
-        "history_depth": "10messages",
-        "history_balanced": false,
-        "include_internal": false,
-        "system_prompt": true,
-        "memory_weave": true,
-        "working_memory": false,
-        "inventory": false,
-        "building_items": true,
-        "available_playbooks": false,
-        "visual_context": false,
-        "realtime_context": true
-    },
     "router_callable": true,
     "nodes": [
         {
             "id": "init",
             "type": "set",
             "assignments": {
-                "loop_count": 0,
-                "max_loops": 5,
-                "all_findings": "",
-                "known_sources": "",
                 "research_topic": "{input}"
             },
+            "next": "plan_research"
+        },
+        {
+            "id": "plan_research",
+            "type": "llm",
+            "context_profile": "conversation",
+            "action": "調査計画を立ててください。回答はサブエージェントへの指示とURI解決に使われます。\n\n## 指示\n- directives: 調査の方向性、重点的に調べるべきポイント、注意すべき観点を具体的に記述してください。会話の文脈から、本当に知りたいことを汲み取ってください。\n- reference_uris: 関連知識（Memopediaのページ、過去に作成したドキュメントなど）があれば、そのsaiverse:// URIを指定してください。関連するものがなければ空配列で構いません。\n- search_hints: Web検索で使うべきキーワード、検索の観点、言語（日本語/英語どちらで検索すべきか）などのヒントを記述してください。",
+            "response_schema": {
+                "type": "object",
+                "properties": {
+                    "directives": {
+                        "type": "string",
+                        "description": "調査の方向性、重点ポイント、注意事項"
+                    },
+                    "reference_uris": {
+                        "type": "array",
+                        "items": {
+                            "type": "string"
+                        },
+                        "description": "参考にすべき saiverse:// URI（なければ空配列）"
+                    },
+                    "search_hints": {
+                        "type": "string",
+                        "description": "Web検索で使うべきキーワードや観点"
+                    }
+                },
+                "required": [
+                    "directives",
+                    "reference_uris",
+                    "search_hints"
+                ]
+            },
+            "output_key": "research_plan",
+            "memorize": {
+                "tags": [
+                    "internal",
+                    "deep_research"
+                ]
+            },
+            "next": "resolve_references"
+        },
+        {
+            "id": "resolve_references",
+            "type": "tool",
+            "action": "resolve_uri",
+            "args_input": {
+                "uris": "research_plan.reference_uris"
+            },
+            "output_key": "reference_content",
             "next": "exec_search"
         },
         {
             "id": "exec_search",
             "type": "subplay",
             "playbook": "web_search_step",
-            "input_template": "{research_topic}",
-            "propagate_output": false,
+            "input_template": "## 調査トピック\n{research_topic}\n\n## 調査指示\n{research_plan.directives}\n\n## 検索のヒント\n{research_plan.search_hints}\n\n## 参考資料\n{reference_content}",
+            "propagate_output": true,
             "execution": "subagent",
             "subagent_chronicle": true,
-            "next": "accumulate"
-        },
-        {
-            "id": "accumulate",
-            "type": "set",
-            "assignments": {
-                "all_findings": "{all_findings}\n\n---\n### 検索イテレーション {loop_count}\n{_subagent_chronicle}",
-                "known_sources": "{known_sources}\n{step_summary.source_url}",
-                "loop_count": "={loop_count} + 1"
-            },
-            "next": "check_done"
-        },
-        {
-            "id": "check_done",
-            "type": "llm",
-            "context_profile": "worker_light",
-            "action": "調査トピック「{research_topic}」について、収集した情報が十分かどうか判断してください。\n\n収集済み情報:\n{all_findings}\n\nループ回数: {loop_count}/{max_loops}\n\n以下を考慮して判断:\n- トピックの主要な側面がカバーされているか\n- 信頼できる情報源から情報が得られているか\n- レポートを書くのに十分な具体的情報があるか",
-            "response_schema": {
-                "type": "object",
-                "properties": {
-                    "is_sufficient": {
-                        "type": "string",
-                        "enum": [
-                            "true",
-                            "false"
-                        ],
-                        "description": "情報が十分かどうか"
-                    },
-                    "missing_aspects": {
-                        "type": "string",
-                        "description": "不足している観点（あれば）"
-                    }
-                },
-                "required": [
-                    "is_sufficient"
-                ]
-            },
-            "output_key": "sufficiency_check",
-            "next": "decide_continue"
-        },
-        {
-            "id": "decide_continue",
-            "type": "pass",
-            "conditional_next": {
-                "field": "sufficiency_check.is_sufficient",
-                "operator": "eq",
-                "cases": {
-                    "true": "generate_report",
-                    "default": "check_loop_limit"
-                }
-            }
-        },
-        {
-            "id": "check_loop_limit",
-            "type": "pass",
-            "conditional_next": {
-                "field": "loop_count",
-                "operator": "gte",
-                "cases": {
-                    "{max_loops}": "generate_report",
-                    "default": "exec_search"
-                }
-            }
+            "next": "generate_report"
         },
         {
             "id": "generate_report",
             "type": "llm",
-            "context_profile": "worker",
-            "action": "調査トピック「{research_topic}」について、収集した情報を基に包括的なレポートを作成してください。\n\n収集済み情報:\n{all_findings}\n\nレポート要件:\n- 明確な構成（概要、本文、結論）\n- 情報源の明記\n- 事実に基づいた客観的な記述\n- 読みやすいMarkdown形式",
+            "context_profile": "conversation",
+            "action": "収集した調査結果を基に包括的なレポートを作成してください。結果はdocument_createツールでドキュメント化されます。\n\n## 調査計画（方針）\n{research_plan.directives}\n\n## 調査結果\n{research_findings}\n\nレポート要件:\n- 明確な構成（概要、本文、結論）\n- 各情報の出典URL明記\n- 事実と数字を優先した客観的な記述\n- 読みやすいMarkdown形式\n- 調査で得られた全ての重要事実を漏れなく含めること\n- 調査計画の方針に沿った構成にすること",
             "response_schema": {
                 "type": "object",
                 "properties": {
@@ -134,6 +104,12 @@
                     "summary"
                 ]
             },
+            "memorize": {
+                "tags": [
+                    "internal",
+                    "deep_research"
+                ]
+            },
             "output_key": "report",
             "next": "create_document"
         },
@@ -152,12 +128,12 @@
         {
             "id": "notify_complete",
             "type": "memorize",
-            "action": "<system>ディープリサーチ完了\n\nトピック: {research_topic}\nドキュメント: 「{report.title}」を作成しました。\n調査ループ: {loop_count}回\n調査済みソース: {known_sources}\n\n結果: {doc_result}</system>",
+            "action": "ディープリサーチ完了\n\nトピック: {research_topic}\nドキュメント: 「{report.title}」を作成しました。\n\n結果: {doc_result}",
             "role": "user",
             "tags": [
-                "tool",
+                "internal",
                 "deep_research",
-                "complete"
+                "playbook_result"
             ],
             "next": null
         }

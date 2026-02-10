@@ -1,0 +1,106 @@
+{
+    "name": "agentic_chat",
+    "display_name": "エージェントチャット",
+    "description": "ツールを自由に使って情報を集め、回答するエージェント型チャット",
+    "input_schema": [
+        {
+            "name": "input",
+            "description": "ユーザーの要求"
+        }
+    ],
+    "router_callable": true,
+    "dev_only": true,
+    "nodes": [
+        {
+            "id": "init",
+            "type": "set",
+            "assignments": {
+                "loop_count": 0,
+                "max_loops": 5,
+                "tool_history": "",
+                "response_text": ""
+            },
+            "next": "agent_think"
+        },
+        {
+            "id": "agent_think",
+            "type": "llm",
+            "context_profile": "conversation",
+            "available_tools": [
+                "memory_search_brief",
+                "searxng_search",
+                "read_url_content",
+                "memopedia_search",
+                "chronicle_search",
+                "document_read",
+                "calculator"
+            ],
+            "action": "ユーザーの要求に答えてください。必要な情報が不足している場合はツールを使って調べてから回答してください。\n\nこれまでのツール呼び出し結果:\n{tool_history}\n\nツールが不要、または十分な情報が集まった場合はテキストで直接回答してください。ツールを呼ぶ場合は1回に1つだけ選んでください。",
+            "output_keys": [
+                {"text": "response_text"},
+                {"function_call": "fc"}
+            ],
+            "next": "check_tool_call"
+        },
+        {
+            "id": "check_tool_call",
+            "type": "pass",
+            "conditional_next": {
+                "field": "tool_called",
+                "operator": "eq",
+                "cases": {
+                    "True": "exec_tool",
+                    "default": "record"
+                }
+            }
+        },
+        {
+            "id": "exec_tool",
+            "type": "tool_call",
+            "call_source": "fc",
+            "output_key": "tool_result",
+            "next": "accumulate"
+        },
+        {
+            "id": "accumulate",
+            "type": "set",
+            "assignments": {
+                "tool_history": "{tool_history}\n\n### {fc.name}\n結果: {tool_result}",
+                "loop_count": "={loop_count} + 1"
+            },
+            "next": "check_loop_limit"
+        },
+        {
+            "id": "check_loop_limit",
+            "type": "pass",
+            "conditional_next": {
+                "field": "loop_count",
+                "operator": "gte",
+                "cases": {
+                    "5": "force_respond",
+                    "default": "agent_think"
+                }
+            }
+        },
+        {
+            "id": "force_respond",
+            "type": "llm",
+            "context_profile": "conversation",
+            "action": "ツール呼び出しの上限に達しました。これまでに収集した情報を基に回答を生成してください。\n\n収集情報:\n{tool_history}",
+            "output_key": "response_text",
+            "memorize": {
+                "tags": ["internal", "agentic_chat"]
+            },
+            "next": "record"
+        },
+        {
+            "id": "record",
+            "type": "memorize",
+            "action": "{response_text}",
+            "role": "assistant",
+            "tags": ["internal", "agentic_chat", "playbook_result"],
+            "next": null
+        }
+    ],
+    "start_node": "init"
+}

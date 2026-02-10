@@ -8,19 +8,6 @@
             "description": "Optional note or hint about where to go"
         }
     ],
-    "context_requirements": {
-        "history_depth": "full",
-        "history_balanced": false,
-        "include_internal": false,
-        "system_prompt": true,
-        "memory_weave": true,
-        "working_memory": false,
-        "inventory": true,
-        "building_items": true,
-        "available_playbooks": false,
-        "visual_context": false,
-        "realtime_context": true
-    },
     "router_callable": true,
     "nodes": [
         {
@@ -34,7 +21,8 @@
         {
             "id": "decide_destination",
             "type": "llm",
-            "action": "以下の建物一覧から、移動先の building_id を1つ選び、JSONで返してください。\n建物一覧:\n{buildings_json}\n現在の入力: {input}\n必ず存在する building_id を選び、移動先が明確になるようにしてください。",
+            "context_profile": "router",
+            "action": "以下の建物一覧から移動先の building_id を1つ選んでください。結果はmove_personaツールに渡されます。\n\n建物一覧:\n{buildings_json}\n\n必ず存在する building_id を選んでください。",
             "response_schema": {
                 "type": "object",
                 "properties": {
@@ -48,6 +36,9 @@
                 ]
             },
             "output_key": "move_choice",
+            "memorize": {
+                "tags": ["internal", "building_move"]
+            },
             "next": "move"
         },
         {
@@ -66,8 +57,9 @@
             "action": "{last}",
             "role": "user",
             "tags": [
-                "tool",
-                "move_persona"
+                "internal",
+                "building_move",
+                "playbook_result"
             ],
             "next": null
         }

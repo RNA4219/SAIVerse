@@ -830,7 +830,7 @@ class GeminiClient(LLMClient):
                     self._store_reasoning(reasoning_entries)
 
                     if response_schema:
-                        logging.info("[gemini] Structured output: text=%r, len=%d", text[:200] if text else "(empty)", len(text))
+                        logging.info("[gemini] Structured output: text=%r, len=%d", text if text else "(empty)", len(text))
                         try:
                             parsed = json.loads(text)
                             if isinstance(parsed, dict):

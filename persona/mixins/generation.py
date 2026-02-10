@@ -388,7 +388,7 @@ class PersonaGenerationMixin:
                         exclude_created_at=exclude_times,
                     )
                     if snippet:
-                        logging.debug("[memory] recall snippet content=%s", snippet[:400])
+                        logging.debug("[memory] recall snippet content=%s", snippet)
                         recall_visible.append(snippet)
                         # 注意: writing snippet to SAIMemory via append_persona_message disabled (would create loops)
             except Exception as exc:

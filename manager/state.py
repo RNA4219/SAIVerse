@@ -60,6 +60,7 @@ class CoreState:
     api_port: int = 0
     autonomous_conversation_running: bool = False
     global_auto_enabled: bool = False  # Global ON/OFF for ConversationManager
+    developer_mode: bool = False  # Developer mode: shows Task, Phenomena, dev_only playbooks
     current_playbook: Optional[str] = None  # Selected playbook override for Chat Options
     playbook_params: Dict[str, Any] = field(default_factory=dict)  # Parameters for the selected playbook
 
