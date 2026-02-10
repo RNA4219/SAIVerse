@@ -105,7 +105,7 @@ export default function FileUpload({
                 transition: 'all 0.2s',
             }}
             onClick={handleClick}
-            onMouseEnter={e => { e.currentTarget.style.borderColor = '#6366f1'; }}
+            onMouseEnter={e => { e.currentTarget.style.borderColor = '#06b6d4'; }}
             onMouseLeave={e => { e.currentTarget.style.borderColor = '#4b5563'; }}
         >
             <input

@@ -33,7 +33,7 @@ def _record_llm_usage(client, persona_id: Optional[str], node_type: str) -> None
     try:
         usage = client.consume_usage()
         if usage:
-            from usage_tracker import get_usage_tracker
+            from saiverse.usage_tracker import get_usage_tracker
             get_usage_tracker().record_usage(
                 model_id=usage.model,
                 input_tokens=usage.input_tokens,
@@ -246,7 +246,7 @@ def generate_level1_arasuji(
         source_ids = [msg.id for msg in messages]
 
         if dry_run:
-            LOGGER.info(f"[DRY RUN] Would create level-1 arasuji: {content[:100]}...")
+            LOGGER.info(f"[DRY RUN] Would create level-1 arasuji: {content}")
             return ArasujiEntry(
                 id="dry-run",
                 level=1,
@@ -271,7 +271,7 @@ def generate_level1_arasuji(
             source_count=len(messages),
             message_count=len(messages),
         )
-        LOGGER.info(f"Created level-1 arasuji: {content[:80]}...")
+        LOGGER.info(f"Created level-1 arasuji: {content}")
         return entry
 
     except Exception as e:
@@ -380,7 +380,7 @@ def generate_consolidated_arasuji(
         total_messages = sum(e.message_count for e in entries)
 
         if dry_run:
-            LOGGER.info(f"[DRY RUN] Would create level-{target_level} arasuji: {content[:100]}...")
+            LOGGER.info(f"[DRY RUN] Would create level-{target_level} arasuji: {content}")
             LOGGER.info(f"[DRY RUN] Would mark {len(entries)} entries as consolidated")
             return ArasujiEntry(
                 id="dry-run",
@@ -411,7 +411,7 @@ def generate_consolidated_arasuji(
         # Mark source entries as consolidated
         mark_consolidated(conn, source_ids, entry.id)
 
-        LOGGER.info(f"Created level-{target_level} arasuji ({total_messages} messages): {content[:80]}...")
+        LOGGER.info(f"Created level-{target_level} arasuji ({total_messages} messages): {content}")
         return entry
 
     except Exception as e:

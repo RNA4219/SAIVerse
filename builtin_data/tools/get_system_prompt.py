@@ -17,6 +17,7 @@ def _safe_format(template: str, variables: Dict[str, Any]) -> str:
     try:
         return template.format(**variables)
     except Exception:
+        LOGGER.warning("Template format failed for keys=%s", list(variables.keys()), exc_info=True)
         return template
 
 
@@ -79,8 +80,8 @@ def get_system_prompt(
             for placeholder, value in replacements.items():
                 common_text = common_text.replace(placeholder, value)
             system_sections.append(common_text.strip())
-        except Exception as exc:
-            LOGGER.debug("Failed to format common prompt: %s", exc)
+        except Exception:
+            LOGGER.warning("Failed to format common prompt", exc_info=True)
 
     # 2. "## あなたについて" section
     persona_section_parts: List[str] = []
@@ -94,6 +95,7 @@ def get_system_prompt(
             inv_builder = getattr(persona, "_inventory_summary_lines", None)
             inv_lines: List[str] = inv_builder() if callable(inv_builder) else []
         except Exception:
+            LOGGER.warning("Failed to build inventory lines", exc_info=True)
             inv_lines = []
         if inv_lines:
             persona_section_parts.append("### インベントリ\n" + "\n".join(inv_lines))

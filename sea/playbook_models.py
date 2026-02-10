@@ -23,6 +23,7 @@ class ConditionalNext(BaseModel):
 class NodeType(str, Enum):
     LLM = "llm"
     TOOL = "tool"
+    TOOL_CALL = "tool_call"
     SPEAK = "speak"
     THINK = "think"
     MEMORY = "memorize"
@@ -44,9 +45,16 @@ class LLMNodeDef(BaseModel):
         default=None,
         description="Conditional routing based on state field. If specified, overrides 'next'."
     )
+    context_profile: Optional[str] = Field(
+        default=None,
+        description="Context profile name. Overrides playbook-level context_requirements and model_type. "
+                    "Values: 'conversation' (normal model, full context), 'router' (lightweight, full context), "
+                    "'worker' (normal, isolated), 'worker_light' (lightweight, isolated)."
+    )
     model_type: Optional[str] = Field(
         default="normal",
-        description="Which model to use: 'normal' (default) or 'lightweight' for faster/cheaper models."
+        description="Which model to use: 'normal' (default) or 'lightweight' for faster/cheaper models. "
+                    "Ignored when context_profile is set (profile determines model)."
     )
     response_schema: Optional[Dict[str, Any]] = Field(
         default=None,
@@ -101,6 +109,34 @@ class ToolNodeDef(BaseModel):
     output_keys: Optional[list] = Field(
         default=None,
         description="List of keys to store tuple results. E.g. ['text', 'snippet', 'file_path'] for multi-value tool returns."
+    )
+    next: Optional[str] = None
+    conditional_next: Optional[ConditionalNext] = Field(
+        default=None,
+        description="Conditional routing based on state field. If specified, overrides 'next'."
+    )
+
+
+class ToolCallNodeDef(BaseModel):
+    """Node that dynamically executes a tool chosen by an LLM node.
+
+    Reads the tool name and arguments from state (stored by an LLM node with
+    available_tools + output_keys), looks up the tool in TOOL_REGISTRY, and
+    executes it.  This enables agentic loops where the LLM freely picks tools
+    without per-tool branching in the playbook graph.
+    """
+    id: str
+    type: Literal[NodeType.TOOL_CALL]
+    call_source: str = Field(
+        default="fc",
+        description="State key prefix where the LLM stored the function call. "
+                    "Reads '{call_source}.name' for the tool name and "
+                    "'{call_source}.args' for the arguments dict. "
+                    "Falls back to legacy state keys 'tool_name'/'tool_args' if not found."
+    )
+    output_key: Optional[str] = Field(
+        default=None,
+        description="Key name to store tool result in state for later nodes."
     )
     next: Optional[str] = None
     conditional_next: Optional[ConditionalNext] = Field(
@@ -189,6 +225,15 @@ class SubPlayNodeDef(BaseModel):
     playbook: str = Field(description="Name of the sub-playbook to execute")
     input_template: Optional[str] = Field(default="{input}", description="Template for the input passed to the sub-playbook")
     propagate_output: bool = Field(default=False, description="If true, append sub-playbook outputs to parent outputs")
+    execution: Optional[str] = Field(
+        default="inline",
+        description="Execution mode: 'inline' (default, runs in parent context) or "
+                    "'subagent' (runs in a temporary thread, only result returns to parent)."
+    )
+    subagent_chronicle: bool = Field(
+        default=True,
+        description="When execution='subagent', generate a chronicle summary on completion."
+    )
     next: Optional[str] = None
     conditional_next: Optional[ConditionalNext] = Field(
         default=None,
@@ -225,6 +270,15 @@ class ExecNodeDef(BaseModel):
         default="selected_args",
         description="State variable name containing args dict for the sub-playbook. "
                     "The 'input' or 'query' key from this dict is passed as sub_input."
+    )
+    execution: Optional[str] = Field(
+        default="inline",
+        description="Execution mode: 'inline' (default, runs in parent context) or "
+                    "'subagent' (runs in a temporary thread, only result returns to parent)."
+    )
+    subagent_chronicle: bool = Field(
+        default=True,
+        description="When execution='subagent', generate a chronicle summary on completion."
     )
     next: Optional[str] = None
     conditional_next: Optional[ConditionalNext] = Field(
@@ -293,9 +347,9 @@ class StelisEndNodeDef(BaseModel):
 
 
 NodeDef = Union[
-    LLMNodeDef, ToolNodeDef, SpeakNodeDef, ThinkNodeDef, MemorizeNodeDef,
-    SayNodeDef, PassNodeDef, SubPlayNodeDef, SetNodeDef, ExecNodeDef,
-    StelisStartNodeDef, StelisEndNodeDef
+    LLMNodeDef, ToolNodeDef, ToolCallNodeDef, SpeakNodeDef, ThinkNodeDef,
+    MemorizeNodeDef, SayNodeDef, PassNodeDef, SubPlayNodeDef, SetNodeDef,
+    ExecNodeDef, StelisStartNodeDef, StelisEndNodeDef
 ]
 
 class InputParam(BaseModel):
@@ -373,6 +427,60 @@ class ContextRequirements(BaseModel):
     )
 
 
+# ---------------------------------------------------------------------------
+# Context Profiles — predefined combinations of model_type + context settings
+# ---------------------------------------------------------------------------
+# conversation / router share the same context (only model_type differs).
+# worker / worker_light are fully isolated (no history, no system prompt).
+
+_FULL_CONTEXT_REQUIREMENTS = ContextRequirements(
+    history_depth="full",
+    history_balanced=False,
+    include_internal=False,
+    system_prompt=True,
+    memory_weave=True,
+    working_memory=False,
+    inventory=True,
+    building_items=True,
+    available_playbooks=True,
+    visual_context=True,
+    realtime_context=True,
+)
+
+_ISOLATED_CONTEXT_REQUIREMENTS = ContextRequirements(
+    history_depth=0,
+    history_balanced=False,
+    include_internal=False,
+    system_prompt=False,
+    memory_weave=False,
+    working_memory=False,
+    inventory=False,
+    building_items=False,
+    available_playbooks=False,
+    visual_context=False,
+    realtime_context=False,
+)
+
+CONTEXT_PROFILES: Dict[str, Dict[str, Any]] = {
+    "conversation": {
+        "model_type": "normal",
+        "requirements": _FULL_CONTEXT_REQUIREMENTS,
+    },
+    "router": {
+        "model_type": "lightweight",
+        "requirements": _FULL_CONTEXT_REQUIREMENTS,
+    },
+    "worker": {
+        "model_type": "normal",
+        "requirements": _ISOLATED_CONTEXT_REQUIREMENTS,
+    },
+    "worker_light": {
+        "model_type": "lightweight",
+        "requirements": _ISOLATED_CONTEXT_REQUIREMENTS,
+    },
+}
+
+
 class PlaybookSchema(BaseModel):
     name: str = Field(..., pattern=r"^[a-z0-9_]+$")
     display_name: Optional[str] = Field(default=None, description="Human-readable display name for UI. Falls back to name if not set.")
@@ -393,6 +501,10 @@ class PlaybookSchema(BaseModel):
     user_selectable: bool = Field(
         default=False,
         description="If true, this meta playbook can be selected by user in the UI."
+    )
+    dev_only: bool = Field(
+        default=False,
+        description="If true, this playbook is only available when developer mode is enabled."
     )
     nodes: List[NodeDef]
     start_node: str

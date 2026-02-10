@@ -108,7 +108,7 @@
 }
 
 .input:focus {
-    border-color: #6366f1;
+    border-color: #06b6d4;
 }
 
 .error {
@@ -148,7 +148,7 @@
 }
 
 .saveBtn {
-    background: #6366f1;
+    background: #06b6d4;
     border: none;
     color: white;
     padding: 0.5rem 1rem;
@@ -162,7 +162,7 @@
 }
 
 .saveBtn:hover {
-    background: #4f46e5;
+    background: #0891b2;
 }
 
 .saveBtn:disabled {

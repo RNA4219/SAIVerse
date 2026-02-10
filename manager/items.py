@@ -121,6 +121,8 @@ class ItemService:
                 "description": row.DESCRIPTION or "",
                 "file_path": row.FILE_PATH,
                 "state": state_payload,
+                "creator_id": row.CREATOR_ID,
+                "source_context": row.SOURCE_CONTEXT,
                 "created_at": row.CREATED_AT,
                 "updated_at": row.UPDATED_AT,
             }
@@ -481,7 +483,7 @@ class ItemService:
         except OSError as exc:
             raise RuntimeError(f"ファイルの更新に失敗しました: {exc}") from exc
 
-        from media_summary import ensure_document_summary
+        from saiverse.media_summary import ensure_document_summary
         new_summary = ensure_document_summary(file_path)
 
         db = self.manager.SessionLocal()
@@ -598,7 +600,7 @@ class ItemService:
                     open_items.append(item)
         return open_items
 
-    def create_document_item(self, persona_id: str, name: str, description: str, content: str) -> str:
+    def create_document_item(self, persona_id: str, name: str, description: str, content: str, source_context: Optional[str] = None) -> str:
         """Create a new document item and place it in the current building."""
         persona = self.manager.personas.get(persona_id)
         if not persona or getattr(persona, "is_proxy", False):
@@ -608,13 +610,13 @@ class ItemService:
         if not building_id:
             raise RuntimeError("現在地が不明なため、文書を作成できません。")
 
-        from media_utils import store_document_text
+        from saiverse.media_utils import store_document_text
         try:
             metadata, file_path = store_document_text(content, source="tool:document_create")
         except Exception as exc:
             raise RuntimeError(f"ファイルの保存に失敗しました: {exc}") from exc
 
-        from media_summary import ensure_document_summary
+        from saiverse.media_summary import ensure_document_summary
         summary = ensure_document_summary(file_path)
         if not summary:
             summary = description
@@ -633,6 +635,8 @@ class ItemService:
                 DESCRIPTION=summary,
                 FILE_PATH=relative_path,
                 STATE_JSON=json.dumps(initial_state),
+                CREATOR_ID=persona_id,
+                SOURCE_CONTEXT=source_context,
                 CREATED_AT=timestamp,
                 UPDATED_AT=timestamp,
             )
@@ -659,6 +663,8 @@ class ItemService:
             "description": summary,
             "file_path": relative_path,
             "state": {"is_open": True},
+            "creator_id": persona_id,
+            "source_context": source_context,
             "created_at": timestamp,
             "updated_at": timestamp,
         }
@@ -684,7 +690,8 @@ class ItemService:
         return f"文書「{name}」を作成しました。アイテムID: {item_id}"
 
     def create_picture_item(
-        self, persona_id: str, name: str, description: str, file_path: str, building_id: Optional[str] = None
+        self, persona_id: str, name: str, description: str, file_path: str,
+        building_id: Optional[str] = None, source_context: Optional[str] = None,
     ) -> str:
         """Create a new picture item and place it in the specified building."""
         persona = self.manager.personas.get(persona_id)
@@ -716,6 +723,8 @@ class ItemService:
                 TYPE="picture",
                 DESCRIPTION=description,
                 FILE_PATH=relative_path,
+                CREATOR_ID=persona_id,
+                SOURCE_CONTEXT=source_context,
                 CREATED_AT=timestamp,
                 UPDATED_AT=timestamp,
             )
@@ -742,6 +751,8 @@ class ItemService:
             "description": description,
             "file_path": relative_path,
             "state": {},
+            "creator_id": persona_id,
+            "source_context": source_context,
             "created_at": timestamp,
             "updated_at": timestamp,
         }
@@ -767,7 +778,8 @@ class ItemService:
         return item_id
 
     def create_picture_item_for_user(
-        self, name: str, description: str, file_path: str, building_id: str
+        self, name: str, description: str, file_path: str, building_id: str,
+        creator_id: Optional[str] = None, source_context: Optional[str] = None,
     ) -> str:
         """Create a picture item from user upload and place it in the specified building.
 
@@ -793,6 +805,8 @@ class ItemService:
                 TYPE="picture",
                 DESCRIPTION=description,
                 FILE_PATH=relative_path,
+                CREATOR_ID=creator_id,
+                SOURCE_CONTEXT=source_context,
                 CREATED_AT=timestamp,
                 UPDATED_AT=timestamp,
             )
@@ -819,6 +833,8 @@ class ItemService:
             "description": description,
             "file_path": relative_path,
             "state": {},
+            "creator_id": creator_id,
+            "source_context": source_context,
             "created_at": timestamp,
             "updated_at": timestamp,
         }
@@ -842,7 +858,8 @@ class ItemService:
         return item_id
 
     def create_document_item_for_user(
-        self, name: str, description: str, file_path: str, building_id: str, is_open: bool = True
+        self, name: str, description: str, file_path: str, building_id: str,
+        is_open: bool = True, creator_id: Optional[str] = None, source_context: Optional[str] = None,
     ) -> str:
         """Create a document item from user upload and place it in the specified building.
 
@@ -872,6 +889,8 @@ class ItemService:
                 DESCRIPTION=description,
                 FILE_PATH=relative_path,
                 STATE_JSON=json.dumps(initial_state),
+                CREATOR_ID=creator_id,
+                SOURCE_CONTEXT=source_context,
                 CREATED_AT=timestamp,
                 UPDATED_AT=timestamp,
             )
@@ -898,6 +917,8 @@ class ItemService:
             "description": description,
             "file_path": relative_path,
             "state": initial_state,
+            "creator_id": creator_id,
+            "source_context": source_context,
             "created_at": timestamp,
             "updated_at": timestamp,
         }

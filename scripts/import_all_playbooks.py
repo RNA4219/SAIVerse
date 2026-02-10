@@ -90,6 +90,7 @@ def import_playbooks_from_directory(
                 display_name = data.get("display_name")
                 router_callable = data.get("router_callable", False)
                 user_selectable = data.get("user_selectable", False)
+                dev_only = data.get("dev_only", False)
 
                 # Check if already exists
                 existing = session.query(Playbook).filter(Playbook.name == name).first()
@@ -112,6 +113,7 @@ def import_playbooks_from_directory(
                             existing.nodes_json = json.dumps(data, ensure_ascii=False)
                             existing.router_callable = router_callable
                             existing.user_selectable = user_selectable
+                            existing.dev_only = dev_only
                             updated_count += 1
                             logging.info(f"Updated playbook '{name}' (router_callable={router_callable})")
                     else:
@@ -143,6 +145,7 @@ def import_playbooks_from_directory(
                         nodes_json=nodes_json,
                         router_callable=router_callable,
                         user_selectable=user_selectable,
+                        dev_only=dev_only,
                     )
                     session.add(record)
                     imported_count += 1

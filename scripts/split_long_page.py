@@ -10,7 +10,7 @@ This script:
 
 Usage:
     python scripts/split_long_page.py --persona air --page <page_id>
-    python scripts/split_long_page.py --persona air --page <page_id> --model gemini-2.0-flash
+    python scripts/split_long_page.py --persona air --page <page_id> --model gemini-2.5-flash-lite-preview-09-2025
     python scripts/split_long_page.py --persona air --page <page_id> --dry-run
 """
 
@@ -40,7 +40,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 LOGGER = logging.getLogger(__name__)
 
 # Environment variable for default model
-ENV_MODEL = os.getenv("MEMORY_WEAVE_MODEL", "gemini-2.0-flash")
+ENV_MODEL = os.getenv("MEMORY_WEAVE_MODEL", "gemini-2.5-flash-lite-preview-09-2025")
 
 
 def get_llm_response(client, prompt: str, response_schema: dict) -> dict:
@@ -236,7 +236,7 @@ JSON形式で回答してください。"""
     # Get LLM client
     print(f"\n[Analysis] Analyzing page content with LLM ({args.model})...")
 
-    from model_configs import find_model_config
+    from saiverse.model_configs import find_model_config
     from llm_clients.factory import get_llm_client
 
     resolved_model_id, model_config = find_model_config(args.model)

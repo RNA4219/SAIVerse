@@ -146,6 +146,7 @@ class Playbook(Base):
     nodes_json = Column(Text, nullable=False)
     router_callable = Column(Boolean, nullable=False, default=False)  # Can be called from router
     user_selectable = Column(Boolean, nullable=False, default=False)  # Can be selected by user in UI
+    dev_only = Column(Boolean, nullable=False, default=False)  # Only available when developer mode is enabled
     created_at = Column(DateTime, server_default=func.now(), nullable=False)
     updated_at = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
 
@@ -169,6 +170,8 @@ class Item(Base):
     DESCRIPTION = Column(String(2048), default="", nullable=False)
     FILE_PATH = Column(String(512), nullable=True)
     STATE_JSON = Column(String, nullable=True)
+    CREATOR_ID = Column(String(255), nullable=True)
+    SOURCE_CONTEXT = Column(String, nullable=True)
     CREATED_AT = Column(DateTime, server_default=func.now(), nullable=False)
     UPDATED_AT = Column(DateTime, server_default=func.now(), onupdate=func.now(), nullable=False)
 

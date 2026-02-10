@@ -29,7 +29,7 @@ from sai_memory.memory.storage import (
 )
 from sai_memory.memory.recall import semantic_recall_groups
 from sai_memory.memopedia import Memopedia
-from usage_tracker import get_usage_tracker
+from saiverse.usage_tracker import get_usage_tracker
 
 LOGGER = logging.getLogger(__name__)
 
@@ -449,7 +449,7 @@ def generate_memopedia_page(
             response = client.generate(messages=messages, tools=[])
             _record_llm_usage(client, persona_id, "memopedia_query")
             messages.append({"role": "assistant", "content": response})
-            LOGGER.debug(f"[Loop {loop + 1}] Query generation response: {response[:300]}{'...' if len(response) > 300 else ''}")
+            LOGGER.debug(f"[Loop {loop + 1}] Query generation response: {response}")
         except Exception as e:
             LOGGER.error(f"LLM call failed: {e}")
             break
@@ -519,7 +519,7 @@ def generate_memopedia_page(
             response = client.generate(messages=messages, tools=[])
             _record_llm_usage(client, persona_id, "memopedia_select")
             messages.append({"role": "assistant", "content": response})
-            LOGGER.debug(f"[Loop {loop + 1}] Selection response: {response[:200]}...")
+            LOGGER.debug(f"[Loop {loop + 1}] Selection response: {response}")
         except Exception as e:
             LOGGER.error(f"Selection LLM call failed: {e}")
             continue
@@ -605,7 +605,7 @@ def generate_memopedia_page(
             if is_too_short:
                 reason.append(f"too short ({len(extracted)} chars)")
             LOGGER.info(f"[Loop {loop + 1}] Extraction returned no relevant info: {', '.join(reason)}")
-            LOGGER.debug(f"[Loop {loop + 1}] LLM extraction response: {extracted[:200]}{'...' if len(extracted) > 200 else ''}")
+            LOGGER.debug(f"[Loop {loop + 1}] LLM extraction response: {extracted}")
         else:
             if ctx.accumulated_info:
                 ctx.accumulated_info += "\n\n---\n\n" + extracted
@@ -636,7 +636,7 @@ def generate_memopedia_page(
                 continue
 
             is_sufficient = "はい" in response or "yes" in response.lower()
-            LOGGER.info(f"[Loop {loop + 1}] Sufficiency check: {is_sufficient} (response: {response[:50]}...)")
+            LOGGER.info(f"[Loop {loop + 1}] Sufficiency check: {is_sufficient} (response: {response})")
 
             if is_sufficient:
                 LOGGER.info("Information sufficient, stopping search")

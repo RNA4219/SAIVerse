@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import styles from './ChatOptions.module.css';
-import { X } from 'lucide-react';
+import { X, ChevronDown } from 'lucide-react';
 
 interface ModelInfo {
     id: string;
@@ -82,6 +82,8 @@ export default function ChatOptions({ isOpen, onClose, currentPlaybook, onPlaybo
     const [metabolismEnabled, setMetabolismEnabled] = useState<boolean>(true);
     const [metabolismKeepMessages, setMetabolismKeepMessages] = useState<number | null>(null);
     const [metabolismKeepMessagesDefault, setMetabolismKeepMessagesDefault] = useState<number | null>(null);
+    const [historySettingsOpen, setHistorySettingsOpen] = useState(false);
+    const [modelParamsOpen, setModelParamsOpen] = useState(false);
 
     useEffect(() => {
         if (isOpen) {
@@ -353,7 +355,6 @@ export default function ChatOptions({ isOpen, onClose, currentPlaybook, onPlaybo
                     ) : (
                         <>
                             <div className={styles.section}>
-                                <div className={styles.sectionTitle}>一般</div>
                                 <div className={styles.formGroup}>
                                     <label>モデル</label>
                                     <select
@@ -374,162 +375,179 @@ export default function ChatOptions({ isOpen, onClose, currentPlaybook, onPlaybo
                                         value={currentPlaybook || ''}
                                         onChange={(e) => handlePlaybookChange(e.target.value || null)}
                                     >
-                                        <option value="">（自動検出）</option>
                                         {playbooks.map(p => (
                                             <option key={p.id} value={p.id}>{p.name}</option>
                                         ))}
                                     </select>
                                 </div>
-                                <div className={styles.formGroup}>
-                                    <label>
-                                        メッセージ数上限
-                                        {maxHistoryMessagesDefault != null && (
-                                            <span className={styles.hint}> （モデルデフォルト: {maxHistoryMessagesDefault}）</span>
-                                        )}
-                                    </label>
-                                    <input
-                                        type="number"
-                                        className={styles.input}
-                                        min={1}
-                                        max={500}
-                                        value={maxHistoryMessages ?? ''}
-                                        placeholder={maxHistoryMessagesDefault ? `（自動: ${maxHistoryMessagesDefault}）` : '（自動）'}
-                                        onChange={(e) => handleMaxHistoryMessagesInput(e.target.value)}
-                                        onBlur={() => handleMaxHistoryMessagesCommit()}
-                                    />
-                                    <span className={styles.hint}>
-                                        LLMに送信する会話履歴の最大件数。コンテキスト超過エラーが発生する場合は値を下げてください。
-                                    </span>
-                                </div>
-                                <div className={styles.formGroup}>
-                                    <label className={styles.checkboxLabel}>
-                                        <input
-                                            type="checkbox"
-                                            checked={metabolismEnabled}
-                                            onChange={(e) => handleMetabolismEnabledChange(e.target.checked)}
-                                        />
-                                        履歴の新陳代謝
-                                    </label>
-                                    <span className={styles.hint}>
-                                        ON: 会話履歴のウィンドウ始点を固定しキャッシュヒット率を向上。上限到達時にバルクトリミング+Chronicle生成。OFF: 従来のスライディングウィンドウ。
-                                    </span>
-                                </div>
-                                {metabolismEnabled && (
-                                    <div className={styles.formGroup}>
+                                {playbookParamSpecs.length > 0 && playbookParamSpecs.map(param => (
+                                    <div key={param.name} className={styles.formGroup}>
                                         <label>
-                                            代謝後の保持件数
-                                            {metabolismKeepMessagesDefault != null && (
-                                                <span className={styles.hint}> （モデルデフォルト: {metabolismKeepMessagesDefault}）</span>
-                                            )}
+                                            {param.description || param.name}
+                                            {!param.required && <span className={styles.optional}> （任意）</span>}
                                         </label>
-                                        <input
-                                            type="number"
-                                            className={styles.input}
-                                            min={1}
-                                            max={getMaxKeepMessages() ?? 500}
-                                            value={metabolismKeepMessages ?? ''}
-                                            placeholder={metabolismKeepMessagesDefault ? `（自動: ${metabolismKeepMessagesDefault}）` : '（自動）'}
-                                            onChange={(e) => handleMetabolismKeepMessagesInput(e.target.value)}
-                                            onBlur={() => handleMetabolismKeepMessagesCommit()}
-                                        />
-                                        <span className={styles.hint}>
-                                            上限到達時にこの件数まで古い履歴を整理します。
-                                            {getMaxKeepMessages() != null
-                                                ? `設定可能範囲: 1〜${getMaxKeepMessages()}（上限${maxHistoryMessages ?? maxHistoryMessagesDefault} - 20）。超過時は自動調整されます。`
-                                                : '上限との差は20以上必要です。'
-                                            }
-                                        </span>
-                                    </div>
-                                )}
-                            </div>
 
-                            {cacheConfig.supported && (
-                                <div className={styles.section}>
-                                    <div className={styles.sectionTitle}>プロンプトキャッシュ (Anthropic)</div>
-                                    <div className={styles.formGroup}>
-                                        <label className={styles.checkboxLabel}>
-                                            <input
-                                                type="checkbox"
-                                                checked={cacheConfig.enabled}
-                                                onChange={(e) => handleCacheEnabledChange(e.target.checked)}
-                                            />
-                                            プロンプトキャッシュを有効化
-                                        </label>
-                                        <span className={styles.hint}>
-                                            ON: プロンプトをキャッシュしてコスト削減（読取 0.1倍、書込 1.25倍〜2倍）。OFF: キャッシュなし（Anthropic APIは読取専用モード非対応）。
-                                        </span>
-                                    </div>
-                                    {cacheConfig.enabled && cacheConfig.ttl_options.length > 0 && (
-                                        <div className={styles.formGroup}>
-                                            <label>キャッシュ TTL</label>
+                                        {param.resolved_options && param.resolved_options.length > 0 ? (
                                             <select
                                                 className={styles.select}
-                                                value={cacheConfig.ttl}
-                                                onChange={(e) => handleCacheTtlChange(e.target.value)}
+                                                value={playbookParams[param.name] ?? param.default ?? ''}
+                                                onChange={(e) => handlePlaybookParamChange(param.name, e.target.value || null)}
                                             >
-                                                {cacheConfig.ttl_options.map(ttl => (
-                                                    <option key={ttl} value={ttl}>
-                                                        {ttl === '5m' ? '5分（書込コスト 1.25倍）' : '1時間（書込コスト 2倍）'}
-                                                    </option>
+                                                <option value="">{param.required ? '（選択...）' : '（自動）'}</option>
+                                                {param.resolved_options.map(opt => (
+                                                    <option key={opt.value} value={opt.value}>{opt.label}</option>
                                                 ))}
                                             </select>
-                                        </div>
-                                    )}
+                                        ) : param.param_type === 'boolean' ? (
+                                            <input
+                                                type="checkbox"
+                                                checked={playbookParams[param.name] ?? param.default ?? false}
+                                                onChange={(e) => handlePlaybookParamChange(param.name, e.target.checked)}
+                                            />
+                                        ) : param.param_type === 'number' ? (
+                                            <input
+                                                type="number"
+                                                className={styles.input}
+                                                value={playbookParams[param.name] ?? param.default ?? ''}
+                                                onChange={(e) => handlePlaybookParamChange(param.name, parseFloat(e.target.value))}
+                                            />
+                                        ) : (
+                                            <input
+                                                type="text"
+                                                className={styles.input}
+                                                value={playbookParams[param.name] ?? param.default ?? ''}
+                                                onChange={(e) => handlePlaybookParamChange(param.name, e.target.value)}
+                                                placeholder={param.description}
+                                            />
+                                        )}
+                                    </div>
+                                ))}
+                            </div>
+
+                            <div className={styles.section}>
+                                <div
+                                    className={styles.collapsibleTitle}
+                                    onClick={() => setHistorySettingsOpen(!historySettingsOpen)}
+                                >
+                                    <span>データ送信量の管理</span>
+                                    <ChevronDown
+                                        size={16}
+                                        className={`${styles.chevron} ${historySettingsOpen ? styles.chevronOpen : ''}`}
+                                    />
                                 </div>
-                            )}
-
-                            {playbookParamSpecs.length > 0 && (
-                                <div className={styles.section}>
-                                    <div className={styles.sectionTitle}>Playbook パラメータ</div>
-                                    {playbookParamSpecs.map(param => (
-                                        <div key={param.name} className={styles.formGroup}>
+                                {historySettingsOpen && (
+                                    <>
+                                        <div className={styles.formGroup}>
                                             <label>
-                                                {param.description || param.name}
-                                                {!param.required && <span className={styles.optional}> （任意）</span>}
+                                                メッセージ数上限
+                                                {maxHistoryMessagesDefault != null && (
+                                                    <span className={styles.hint}> （モデルデフォルト: {maxHistoryMessagesDefault}）</span>
+                                                )}
                                             </label>
-
-                                            {param.resolved_options && param.resolved_options.length > 0 ? (
-                                                <select
-                                                    className={styles.select}
-                                                    value={playbookParams[param.name] ?? param.default ?? ''}
-                                                    onChange={(e) => handlePlaybookParamChange(param.name, e.target.value || null)}
-                                                >
-                                                    <option value="">{param.required ? '（選択...）' : '（自動）'}</option>
-                                                    {param.resolved_options.map(opt => (
-                                                        <option key={opt.value} value={opt.value}>{opt.label}</option>
-                                                    ))}
-                                                </select>
-                                            ) : param.param_type === 'boolean' ? (
+                                            <input
+                                                type="number"
+                                                className={styles.input}
+                                                min={1}
+                                                max={500}
+                                                value={maxHistoryMessages ?? ''}
+                                                placeholder={maxHistoryMessagesDefault ? `（自動: ${maxHistoryMessagesDefault}）` : '（自動）'}
+                                                onChange={(e) => handleMaxHistoryMessagesInput(e.target.value)}
+                                                onBlur={() => handleMaxHistoryMessagesCommit()}
+                                            />
+                                            <span className={styles.hint}>
+                                                LLMに送信する会話履歴の最大件数。コンテキスト超過エラーが発生する場合は値を下げてください。
+                                            </span>
+                                        </div>
+                                        <div className={styles.formGroup}>
+                                            <label className={styles.checkboxLabel}>
                                                 <input
                                                     type="checkbox"
-                                                    checked={playbookParams[param.name] ?? param.default ?? false}
-                                                    onChange={(e) => handlePlaybookParamChange(param.name, e.target.checked)}
+                                                    checked={metabolismEnabled}
+                                                    onChange={(e) => handleMetabolismEnabledChange(e.target.checked)}
                                                 />
-                                            ) : param.param_type === 'number' ? (
+                                                履歴の新陳代謝
+                                            </label>
+                                            <span className={styles.hint}>
+                                                ON: 会話履歴のウィンドウ始点を固定しキャッシュヒット率を向上。上限到達時にバルクトリミング+Chronicle生成。OFF: 従来のスライディングウィンドウ。
+                                            </span>
+                                        </div>
+                                        {metabolismEnabled && (
+                                            <div className={styles.formGroup}>
+                                                <label>
+                                                    代謝後の保持件数
+                                                    {metabolismKeepMessagesDefault != null && (
+                                                        <span className={styles.hint}> （モデルデフォルト: {metabolismKeepMessagesDefault}）</span>
+                                                    )}
+                                                </label>
                                                 <input
                                                     type="number"
                                                     className={styles.input}
-                                                    value={playbookParams[param.name] ?? param.default ?? ''}
-                                                    onChange={(e) => handlePlaybookParamChange(param.name, parseFloat(e.target.value))}
+                                                    min={1}
+                                                    max={getMaxKeepMessages() ?? 500}
+                                                    value={metabolismKeepMessages ?? ''}
+                                                    placeholder={metabolismKeepMessagesDefault ? `（自動: ${metabolismKeepMessagesDefault}）` : '（自動）'}
+                                                    onChange={(e) => handleMetabolismKeepMessagesInput(e.target.value)}
+                                                    onBlur={() => handleMetabolismKeepMessagesCommit()}
                                                 />
-                                            ) : (
-                                                <input
-                                                    type="text"
-                                                    className={styles.input}
-                                                    value={playbookParams[param.name] ?? param.default ?? ''}
-                                                    onChange={(e) => handlePlaybookParamChange(param.name, e.target.value)}
-                                                    placeholder={param.description}
-                                                />
-                                            )}
-                                        </div>
-                                    ))}
-                                </div>
-                            )}
+                                                <span className={styles.hint}>
+                                                    上限到達時にこの件数まで古い履歴を整理します。
+                                                    {getMaxKeepMessages() != null
+                                                        ? `設定可能範囲: 1〜${getMaxKeepMessages()}（上限${maxHistoryMessages ?? maxHistoryMessagesDefault} - 20）。超過時は自動調整されます。`
+                                                        : '上限との差は20以上必要です。'
+                                                    }
+                                                </span>
+                                            </div>
+                                        )}
+                                        {cacheConfig.supported && (
+                                            <>
+                                                <div className={styles.formGroup}>
+                                                    <label className={styles.checkboxLabel}>
+                                                        <input
+                                                            type="checkbox"
+                                                            checked={cacheConfig.enabled}
+                                                            onChange={(e) => handleCacheEnabledChange(e.target.checked)}
+                                                        />
+                                                        プロンプトキャッシュを有効化 (Anthropic)
+                                                    </label>
+                                                    <span className={styles.hint}>
+                                                        ON: プロンプトをキャッシュしてコスト削減（読取 0.1倍、書込 1.25倍〜2倍）。OFF: キャッシュなし（Anthropic APIは読取専用モード非対応）。
+                                                    </span>
+                                                </div>
+                                                {cacheConfig.enabled && cacheConfig.ttl_options.length > 0 && (
+                                                    <div className={styles.formGroup}>
+                                                        <label>キャッシュ TTL</label>
+                                                        <select
+                                                            className={styles.select}
+                                                            value={cacheConfig.ttl}
+                                                            onChange={(e) => handleCacheTtlChange(e.target.value)}
+                                                        >
+                                                            {cacheConfig.ttl_options.map(ttl => (
+                                                                <option key={ttl} value={ttl}>
+                                                                    {ttl === '5m' ? '5分（書込コスト 1.25倍）' : '1時間（書込コスト 2倍）'}
+                                                                </option>
+                                                            ))}
+                                                        </select>
+                                                    </div>
+                                                )}
+                                            </>
+                                        )}
+                                    </>
+                                )}
+                            </div>
 
                             {Object.keys(paramSpecs).length > 0 && (
                                 <div className={styles.section}>
-                                    <div className={styles.sectionTitle}>パラメータ</div>
-                                    {Object.entries(paramSpecs).map(([key, spec]) => (
+                                    <div
+                                        className={styles.collapsibleTitle}
+                                        onClick={() => setModelParamsOpen(!modelParamsOpen)}
+                                    >
+                                        <span>モデルパラメータ</span>
+                                        <ChevronDown
+                                            size={16}
+                                            className={`${styles.chevron} ${modelParamsOpen ? styles.chevronOpen : ''}`}
+                                        />
+                                    </div>
+                                    {modelParamsOpen && Object.entries(paramSpecs).map(([key, spec]) => (
                                         <div key={key} className={styles.formGroup}>
                                             <label>
                                                 {spec.label}

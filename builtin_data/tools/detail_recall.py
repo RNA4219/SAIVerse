@@ -189,6 +189,7 @@ def _get_messages_in_range(
                     filtered.append(msg)
 
             except Exception:
+                LOGGER.warning("Failed to parse timestamp for message, skipping", exc_info=True)
                 continue
 
         # Limit count

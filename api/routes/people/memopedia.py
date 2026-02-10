@@ -352,7 +352,7 @@ def _run_memopedia_generation(
     from sai_memory.memory.storage import init_db
     from sai_memory.memopedia import init_memopedia_tables
     from sai_memory.memopedia.generator import generate_memopedia_page
-    from model_configs import find_model_config
+    from saiverse.model_configs import find_model_config
     from llm_clients.factory import get_llm_client
     
     try:
@@ -372,7 +372,7 @@ def _run_memopedia_generation(
         # Initialize LLM client
         _update_memopedia_job(job_id, message="Initializing LLM client...")
         
-        env_model = os.getenv("MEMORY_WEAVE_MODEL", "gemini-2.0-flash")
+        env_model = os.getenv("MEMORY_WEAVE_MODEL", "gemini-2.5-flash-lite-preview-09-2025")
         model_to_use = model_name or env_model
         
         resolved_model_id, model_config = find_model_config(model_to_use)

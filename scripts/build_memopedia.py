@@ -16,7 +16,7 @@ Examples:
     python scripts/build_memopedia.py air_city_a --limit 50 --dry-run
 
     # Use a specific model
-    python scripts/build_memopedia.py air_city_a --limit 100 --model gemini-2.0-flash
+    python scripts/build_memopedia.py air_city_a --limit 100 --model gemini-2.5-flash-lite-preview-09-2025
 """
 
 from __future__ import annotations
@@ -41,7 +41,7 @@ os.environ["SAIVERSE_SKIP_TOOL_IMPORTS"] = "1"
 
 from sai_memory.memory.storage import init_db, get_messages_paginated, Message
 from sai_memory.memopedia import Memopedia, init_memopedia_tables, CATEGORY_PEOPLE, CATEGORY_TERMS, CATEGORY_PLANS
-from model_configs import get_model_config, find_model_config
+from saiverse.model_configs import get_model_config, find_model_config
 
 # Import llm_clients lazily to avoid circular import
 # (llm_clients imports tools which imports persona which imports llm_clients)
@@ -53,7 +53,7 @@ LOGGER = logging.getLogger(__name__)
 def _get_prompts_dir() -> Path:
     """Get prompts directory using data_paths or fallback to legacy."""
     try:
-        from data_paths import find_file, PROMPTS_DIR as DATA_PROMPTS_DIR, BUILTIN_DATA_DIR
+        from saiverse.data_paths import find_file, PROMPTS_DIR as DATA_PROMPTS_DIR, BUILTIN_DATA_DIR
         return BUILTIN_DATA_DIR / DATA_PROMPTS_DIR
     except ImportError:
         return Path(__file__).resolve().parents[1] / "system_prompts"
@@ -64,7 +64,7 @@ PROMPTS_DIR = _get_prompts_dir()
 def load_prompt(name: str) -> str:
     """Load a prompt template, checking user_data first then builtin_data."""
     try:
-        from data_paths import load_prompt as dp_load_prompt
+        from saiverse.data_paths import load_prompt as dp_load_prompt
         return dp_load_prompt(name)
     except ImportError:
         # Fallback to legacy
@@ -239,7 +239,7 @@ def apply_edits(content: str, edits: List[Dict[str, str]]) -> str:
             if target and target in result:
                 result = result.replace(target, target + insert_content, 1)
             else:
-                LOGGER.warning(f"Target not found for append_after: {target[:50] if target else '(empty)'}...")
+                LOGGER.warning(f"Target not found for append_after: {target if target else '(empty)'}")
                 # Fallback: append at end
                 result = result + "\n" + insert_content
 
@@ -247,7 +247,7 @@ def apply_edits(content: str, edits: List[Dict[str, str]]) -> str:
             if target and target in result:
                 result = result.replace(target, insert_content, 1)
             else:
-                LOGGER.warning(f"Target not found for replace: {target[:50] if target else '(empty)'}...")
+                LOGGER.warning(f"Target not found for replace: {target if target else '(empty)'}")
 
         elif operation == "append_end":
             if insert_content:
@@ -338,17 +338,17 @@ def refine_page_content(
         if not edits:
             LOGGER.info(f"No edits needed for {title}")
             if new_summary != summary:
-                LOGGER.info(f"  Summary updated: {new_summary[:50]}...")
+                LOGGER.info(f"  Summary updated: {new_summary}")
             if new_keywords != keywords:
                 LOGGER.info(f"  Keywords updated: {new_keywords}")
             return existing_content, new_summary, new_keywords
 
         LOGGER.info(f"Applying {len(edits)} edit(s) to {title}")
         for edit in edits:
-            LOGGER.debug(f"  Edit: {edit.get('operation')} - {str(edit)[:80]}...")
+            LOGGER.debug(f"  Edit: {edit.get('operation')} - {str(edit)}")
 
         if new_summary != summary:
-            LOGGER.info(f"  Summary updated: {new_summary[:50]}...")
+            LOGGER.info(f"  Summary updated: {new_summary}")
         if new_keywords != keywords:
             LOGGER.info(f"  Keywords updated: {new_keywords}")
 
@@ -527,7 +527,7 @@ def extract_knowledge(
 
                 except json.JSONDecodeError as e:
                     LOGGER.warning(f"Failed to parse JSON response: {e}")
-                    LOGGER.debug(f"Response text: {text[:500]}")
+                    LOGGER.debug(f"Response text: {text}")
                     if attempt < max_retries:
                         LOGGER.info(f"Retrying ({attempt + 1}/{max_retries})...")
                         continue
@@ -592,7 +592,7 @@ def apply_pages_to_memopedia(
             # Append to existing page
             if dry_run:
                 LOGGER.info(f"[DRY RUN] Would append to existing page: {title}")
-                LOGGER.info(f"  New content preview: {content[:200]}...")
+                LOGGER.info(f"  New content: {content}")
             else:
                 if client:
                     # Refine mode: use LLM to integrate new content naturally
@@ -621,7 +621,7 @@ def apply_pages_to_memopedia(
             if dry_run:
                 LOGGER.info(f"[DRY RUN] Would create new page: [{category}] {title}")
                 LOGGER.info(f"  Summary: {summary}")
-                LOGGER.info(f"  Content preview: {content[:200]}...")
+                LOGGER.info(f"  Content: {content}")
             else:
                 page_keywords = page_data.get("keywords", [])
                 memopedia.create_page(
@@ -636,7 +636,7 @@ def apply_pages_to_memopedia(
 
 def list_available_models() -> None:
     """Print available models and exit."""
-    from model_configs import MODEL_CONFIGS, get_model_display_name
+    from saiverse.model_configs import MODEL_CONFIGS, get_model_display_name
 
     print("\n利用可能なモデル一覧:")
     print("-" * 60)
@@ -659,7 +659,7 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 使用例:
-  # デフォルトモデル (gemini-2.0-flash) で100件処理
+  # デフォルトモデル (gemini-2.5-flash-lite-preview-09-2025) で100件処理
   python scripts/build_memopedia.py air_city_a --limit 100
 
   # Claude を使用
@@ -692,7 +692,7 @@ def main():
     )
     parser.add_argument("persona_id", nargs="?", help="Persona ID to process")
     parser.add_argument("--limit", type=int, default=100, help="Maximum number of messages to process (default: 100)")
-    parser.add_argument("--model", default="gemini-2.0-flash", help="Model to use for extraction (default: gemini-2.0-flash)")
+    parser.add_argument("--model", default="gemini-2.5-flash-lite-preview-09-2025", help="Model to use for extraction (default: gemini-2.5-flash-lite-preview-09-2025)")
     parser.add_argument("--provider", help="Override provider detection (openai, anthropic, gemini, ollama)")
     parser.add_argument("--dry-run", action="store_true", help="Preview extraction without writing to database")
     parser.add_argument("--batch-size", type=int, default=20, help="Number of messages per LLM call (default: 20)")

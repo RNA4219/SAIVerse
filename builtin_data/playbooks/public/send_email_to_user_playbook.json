@@ -8,26 +8,13 @@
             "description": "Request to send a mail to user"
         }
     ],
-    "context_requirements": {
-        "history_depth": "full",
-        "history_balanced": false,
-        "include_internal": false,
-        "system_prompt": true,
-        "memory_weave": true,
-        "working_memory": false,
-        "inventory": true,
-        "building_items": true,
-        "available_playbooks": false,
-        "visual_context": false,
-        "realtime_context": true
-    },
     "router_callable": true,
     "nodes": [
         {
             "id": "generate_content",
             "type": "llm",
+            "context_profile": "conversation",
             "action": "send_email_to_userツールの引数を決定します。送信先のユーザーID、件名、本文を生成してください。（メールアドレスは、ユーザーIDから自動で取得されます）\n\n### 送信可能なユーザー：\nまはー(ユーザーID: 1)",
-            "next": "record_response",
             "response_schema": {
                 "type": "object",
                 "properties": {
@@ -50,18 +37,10 @@
                     "body"
                 ]
             },
-            "output_key": "email_data"
-        },
-        {
-            "id": "record_response",
-            "type": "memorize",
-            "action": "{email_data}",
-            "role": "assistant",
-            "tags": [
-                "tool",
-                "send_email_to_user",
-                "conversation"
-            ],
+            "output_key": "email_data",
+            "memorize": {
+                "tags": ["internal", "send_email_to_user", "conversation"]
+            },
             "next": "send"
         },
         {
@@ -73,17 +52,17 @@
                 "subject": "email_data.subject",
                 "body": "email_data.body"
             },
-            "next": "record_result"
+            "next": "record"
         },
         {
-            "id": "record_result",
+            "id": "record",
             "type": "memorize",
-            "action": "<system>{last}</system>",
+            "action": "{last}",
             "role": "user",
             "tags": [
-                "tool",
+                "internal",
                 "send_email_to_user",
-                "conversation"
+                "playbook_result"
             ],
             "next": null
         }

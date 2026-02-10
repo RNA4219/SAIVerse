@@ -137,7 +137,7 @@
 .cardValue {
     font-size: 1.5rem;
     font-weight: 600;
-    color: #4CAF50;
+    color: #22d3ee;
 }
 
 .chartContainer {
@@ -215,7 +215,7 @@
 .statValue {
     font-size: 1rem;
     font-weight: 500;
-    color: #4CAF50;
+    color: #22d3ee;
 }
 
 /* Responsive */
@@ -298,7 +298,7 @@
 }
 
 :global([data-theme="light"]) .select:focus {
-    border-color: #3b82f6;
+    border-color: #06b6d4;
 }
 
 :global([data-theme="light"]) .card {

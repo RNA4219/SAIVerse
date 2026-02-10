@@ -8,26 +8,13 @@
             "description": "検索したいトピックや質問"
         }
     ],
-    "context_requirements": {
-        "history_depth": "full",
-        "history_balanced": false,
-        "include_internal": false,
-        "system_prompt": true,
-        "memory_weave": true,
-        "working_memory": false,
-        "inventory": true,
-        "building_items": true,
-        "available_playbooks": false,
-        "visual_context": false,
-        "realtime_context": true
-    },
     "router_callable": true,
     "nodes": [
         {
             "id": "build_query",
             "type": "llm",
-            "action": "<system>SearXNG検索に渡すクエリとオプションを決定してください。検索したい対象を短い検索クエリに要約し、必要なら件数や言語を指定すること。</system>",
-            "next": "log",
+            "context_profile": "router",
+            "action": "SearXNG検索のクエリとオプションを決定してください。検索対象を短いクエリに要約し、必要なら件数や言語を指定すること。結果はsearxng_searchツールに渡されます。",
             "response_schema": {
                 "type": "object",
                 "properties": {
@@ -56,17 +43,10 @@
                     "query"
                 ]
             },
-            "output_key": "search_args"
-        },
-        {
-            "id": "log",
-            "type": "memorize",
-            "action": "{last}",
-            "role": "assistant",
-            "tags": [
-                "tool",
-                "searxng_search"
-            ],
+            "output_key": "search_args",
+            "memorize": {
+                "tags": ["internal", "searxng_search"]
+            },
             "next": "search"
         },
         {
@@ -85,11 +65,12 @@
         {
             "id": "record",
             "type": "memorize",
-            "action": "<system>```{last}```\n\nこれらの情報はユーザーには見えていません。結果を解釈し、あなたの言葉で表現することを勧めます。なお、コンテキストの圧縮のため検索結果は記憶に残りません。覚えておきたい情報は発言するようにしてください。</system>",
+            "action": "```{last}```\n\nこれらの情報はユーザーには見えていません。結果を解釈し、あなたの言葉で表現することを勧めます。なお、コンテキストの圧縮のため検索結果は記憶に残りません。覚えておきたい情報は発言するようにしてください。",
             "role": "user",
             "tags": [
-                "tool",
-                "searxng_search"
+                "internal",
+                "searxng_search",
+                "playbook_result"
             ],
             "next": null
         }

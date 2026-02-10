@@ -12,7 +12,7 @@ from discord_gateway.visitors import VisitorProfile
 
 os.environ.setdefault("GEMINI_FREE_API_KEY", "test-key")
 
-SAIVerseManager = importlib.import_module("saiverse_manager").SAIVerseManager
+SAIVerseManager = importlib.import_module("saiverse.saiverse_manager").SAIVerseManager
 
 
 def _create_manager(tmp_path: Path) -> SAIVerseManager:

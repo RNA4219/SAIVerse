@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from zoneinfo import ZoneInfo
 
-from buildings import Building
+from saiverse.buildings import Building
 from database.models import (
     AI as AIModel,
     Building as BuildingModel,
@@ -62,6 +62,7 @@ class AdminService(BlueprintMixin, HistoryMixin, PersonaMixin):
         self.id_to_name_map = state.id_to_name_map
 
         self.model = state.model
+        self._base_model = getattr(manager, '_base_model', None)
         self.provider = state.provider
         self.context_length = state.context_length
         self.default_avatar = state.default_avatar
@@ -474,6 +475,8 @@ class AdminService(BlueprintMixin, HistoryMixin, PersonaMixin):
                 "DESCRIPTION": item.DESCRIPTION or "",
                 "FILE_PATH": item.FILE_PATH or "",
                 "STATE_JSON": item.STATE_JSON or "",
+                "CREATOR_ID": item.CREATOR_ID,
+                "SOURCE_CONTEXT": item.SOURCE_CONTEXT,
                 "OWNER_KIND": location.OWNER_KIND if location else "world",
                 "OWNER_ID": location.OWNER_ID if location else "",
             }
@@ -489,6 +492,8 @@ class AdminService(BlueprintMixin, HistoryMixin, PersonaMixin):
         owner_id: Optional[str],
         state_json: Optional[str],
         file_path: Optional[str] = None,
+        creator_id: Optional[str] = None,
+        source_context: Optional[str] = None,
     ) -> str:
         normalized_kind = (owner_kind or "world").strip().lower()
         owner_id = (owner_id or "").strip()
@@ -517,6 +522,8 @@ class AdminService(BlueprintMixin, HistoryMixin, PersonaMixin):
                 DESCRIPTION=description or "",
                 STATE_JSON=state_payload,
                 FILE_PATH=(file_path or "").strip() or None,
+                CREATOR_ID=creator_id,
+                SOURCE_CONTEXT=source_context,
             )
             db.add(new_item)
             if normalized_kind != "world":
@@ -655,19 +662,21 @@ class AdminService(BlueprintMixin, HistoryMixin, PersonaMixin):
 
     def create_ai(
         self, name: str, system_prompt: str, home_city_id: int, custom_ai_id: Optional[str] = None
-    ) -> str:
+    ) -> Tuple[bool, str]:
         if home_city_id != self.state.city_id:
             return (
-                "Error: Creating personas in a different city is not supported. "
-                "Use dispatch to move personas between cities."
+                False,
+                "Creating personas in a different city is not supported. "
+                "Use dispatch to move personas between cities.",
             )
         success, message = self._create_persona(name, system_prompt, custom_ai_id)
         if success:
             return (
+                True,
                 f"AI '{name}' and their room created successfully. "
-                "A restart is required for the AI to become active."
+                "A restart is required for the AI to become active.",
             )
-        return f"Error: {message}"
+        return False, message
 
     def update_ai(
         self,
@@ -794,7 +803,7 @@ class AdminService(BlueprintMixin, HistoryMixin, PersonaMixin):
                 if persona.model != new_model:
                     persona.model = new_model
                     from llm_clients import get_llm_client
-                    from model_configs import get_context_length, get_model_provider, model_supports_images
+                    from saiverse.model_configs import get_context_length, get_model_provider, model_supports_images
                     try:
                         context_len = get_context_length(new_model)
                         provider = get_model_provider(new_model)
@@ -815,7 +824,7 @@ class AdminService(BlueprintMixin, HistoryMixin, PersonaMixin):
                 # Recreate lightweight LLM client if model changed
                 if lightweight_model:
                     from llm_clients import get_llm_client
-                    from model_configs import get_context_length, get_model_provider
+                    from saiverse.model_configs import get_context_length, get_model_provider
                     try:
                         lw_context = get_context_length(lightweight_model)
                         lw_provider = get_model_provider(lightweight_model)
@@ -1103,7 +1112,7 @@ class AdminService(BlueprintMixin, HistoryMixin, PersonaMixin):
     def reimport_all_playbooks(self, base_dir: Optional[str] = None) -> str:
         """Re-import all playbooks from builtin_data and user_data directories."""
         try:
-            from data_paths import get_all_data_paths, PLAYBOOKS_DIR
+            from saiverse.data_paths import get_all_data_paths, PLAYBOOKS_DIR
             
             # Collect all directories to scan
             roots: list[Path] = []

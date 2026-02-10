@@ -206,17 +206,29 @@ class UriResolver:
         parsed = parse_sai_uri(uri, context_persona_id=persona_id)
 
         # ペルソナスコープURIのアクセス制御: 自分の記憶のみ参照可能
-        if parsed.is_persona_scoped and persona_id and parsed.persona_id != persona_id:
-            LOGGER.warning(
-                "Access denied: persona %s tried to access %s's %s",
-                persona_id, parsed.persona_id, parsed.scheme,
-            )
-            return ResolvedContent(
-                uri=uri,
-                content="(アクセス拒否: 他ペルソナの記憶は参照できません)",
-                content_type="error",
-                metadata={"error": "access_denied", "target_persona": parsed.persona_id},
-            )
+        if parsed.is_persona_scoped:
+            if not persona_id:
+                LOGGER.warning(
+                    "Access denied: persona_id not provided for persona-scoped URI %s",
+                    uri,
+                )
+                return ResolvedContent(
+                    uri=uri,
+                    content="(アクセス拒否: ペルソナスコープURIにはpersona_idが必要です)",
+                    content_type="error",
+                    metadata={"error": "access_denied", "reason": "persona_id_required"},
+                )
+            if parsed.persona_id != persona_id:
+                LOGGER.warning(
+                    "Access denied: persona %s tried to access %s's %s",
+                    persona_id, parsed.persona_id, parsed.scheme,
+                )
+                return ResolvedContent(
+                    uri=uri,
+                    content="(アクセス拒否: 他ペルソナの記憶は参照できません)",
+                    content_type="error",
+                    metadata={"error": "access_denied", "target_persona": parsed.persona_id},
+                )
 
         handler = self._handlers.get(parsed.scheme)
         if not handler:
@@ -816,7 +828,7 @@ class UriResolver:
 
     def _resolve_image(self, parsed: SaiUri) -> ResolvedContent:
         """画像URIの解決 (パスのみ返す)。"""
-        from media_utils import resolve_media_uri
+        from .media_utils import resolve_media_uri
 
         path = resolve_media_uri(parsed.raw)
         if path and path.exists():
@@ -830,7 +842,7 @@ class UriResolver:
 
     def _resolve_document(self, parsed: SaiUri) -> ResolvedContent:
         """ドキュメントファイルURIの解決。"""
-        from media_utils import resolve_media_uri
+        from .media_utils import resolve_media_uri
 
         path = resolve_media_uri(parsed.raw)
         if path and path.exists():
@@ -849,7 +861,7 @@ class UriResolver:
     def _resolve_persona(self, parsed: SaiUri) -> ResolvedContent:
         """ペルソナ情報の解決 (基本的に既存互換)。"""
         # 主にimage用なのでパス返却のみ
-        from media_utils import resolve_extended_media_uri
+        from .media_utils import resolve_extended_media_uri
 
         path = resolve_extended_media_uri(parsed.raw)
         if path and path.exists():
@@ -903,7 +915,7 @@ class UriResolver:
 
         # フォールバック: 直接adapter作成
         try:
-            from data_paths import get_saiverse_home
+            from .data_paths import get_saiverse_home
             from saiverse_memory import SAIMemoryAdapter
 
             persona_dir = get_saiverse_home() / "personas" / persona_id

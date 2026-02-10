@@ -384,10 +384,12 @@ def _store_image_attachment(
             name=att.filename,
             description=f"User uploaded image: {att.filename}",
             file_path=str(dest_path),
-            building_id=building_id
+            building_id=building_id,
+            creator_id="user",
+            source_context='{"source": "upload"}',
         )
     except Exception as e:
-        logging.warning(f"Failed to create picture item: {e}")
+        logging.warning("Failed to create picture item: %s", e, exc_info=True)
 
     return {
         "type": "image",
@@ -416,12 +418,13 @@ def _store_document_attachment(
     is_pdf = att.filename.lower().endswith('.pdf') or att.mime_type == 'application/pdf'
     if is_pdf:
         try:
-            import fitz  # PyMuPDF
-            doc = fitz.open(stream=data, filetype="pdf")
-            text_parts = [page.get_text() for page in doc[:5]]  # first 5 pages for summary
+            import io
+            from pypdf import PdfReader
+            reader = PdfReader(io.BytesIO(data))
+            text_parts = [page.extract_text() or "" for page in reader.pages[:5]]  # first 5 pages for summary
             content = "\n".join(text_parts)
-            doc.close()
         except Exception:
+            logging.warning("PDF text extraction failed for %s", att.filename, exc_info=True)
             content = "(PDF text extraction failed)"
     else:
         try:
@@ -442,10 +445,12 @@ def _store_document_attachment(
             description=summary,
             file_path=str(dest_path),
             building_id=building_id,
-            is_open=True  # Auto-open so it appears in visual context
+            is_open=True,  # Auto-open so it appears in visual context
+            creator_id="user",
+            source_context='{"source": "upload"}',
         )
     except Exception as e:
-        logging.warning(f"Failed to create document item: {e}")
+        logging.warning("Failed to create document item: %s", e, exc_info=True)
 
     return {
         "type": "document",

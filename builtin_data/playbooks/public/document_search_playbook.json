@@ -8,26 +8,13 @@
             "description": "User request about document search or read"
         }
     ],
-    "context_requirements": {
-        "history_depth": "full",
-        "history_balanced": false,
-        "include_internal": false,
-        "system_prompt": true,
-        "memory_weave": true,
-        "working_memory": false,
-        "inventory": true,
-        "building_items": true,
-        "available_playbooks": false,
-        "visual_context": false,
-        "realtime_context": true
-    },
     "router_callable": true,
     "nodes": [
         {
             "id": "analyze_request",
             "type": "llm",
-            "model_type": "lightweight",
-            "action": "Analyze the user's request and determine the document operation type.\n\n## Operation Types\n- search: Search within document using pattern matching (regex supported)\n- read: Read specific line range from document\n\n## Notes\n- Select a document item from building items or inventory (type='document')\n- For search: Specify the search pattern (regex supported)\n- For read: Specify start_line and end_line (1-based line numbers)\n- If the user wants to see the whole document or a large portion, use read with appropriate line range",
+            "context_profile": "router",
+            "action": "ドキュメント操作のタイプとパラメータを決定してください。結果はdocument_searchまたはdocument_readツールに渡されます。\n\n## Operation Types\n- search: Search within document using pattern matching (regex supported)\n- read: Read specific line range from document\n\n## Notes\n- Select a document item from building items or inventory (type='document')\n- For search: Specify the search pattern (regex supported)\n- For read: Specify start_line and end_line (1-based line numbers)\n- If the whole document or a large portion is needed, use read with appropriate line range",
             "next": null,
             "response_schema": {
                 "type": "object",
@@ -63,6 +50,9 @@
                 ]
             },
             "output_key": "params",
+            "memorize": {
+                "tags": ["internal", "document_search"]
+            },
             "conditional_next": {
                 "field": "params.action",
                 "cases": {
@@ -87,11 +77,12 @@
         {
             "id": "record_search",
             "type": "memorize",
-            "action": "<system>{last}</system>",
+            "action": "{last}",
             "role": "user",
             "tags": [
-                "tool",
-                "document_search"
+                "internal",
+                "document_search",
+                "playbook_result"
             ],
             "next": null
         },
@@ -111,11 +102,12 @@
         {
             "id": "record_read",
             "type": "memorize",
-            "action": "<system>{last}</system>",
+            "action": "{last}",
             "role": "user",
             "tags": [
-                "tool",
-                "document_read"
+                "internal",
+                "document_search",
+                "playbook_result"
             ],
             "next": null
         }

@@ -1,7 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
 import { X, FileText, Code2, Pencil, Save, XCircle, Settings, ArrowRightLeft } from 'lucide-react';
-import ReactMarkdown from 'react-markdown';
+import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
+import remarkGfm from 'remark-gfm';
+import remarkBreaks from 'remark-breaks';
 import styles from './ItemModal.module.css';
+import SaiverseLink from './SaiverseLink';
 import ModalOverlay from './common/ModalOverlay';
 
 interface Item {
@@ -431,7 +434,13 @@ export default function ItemModal({ isOpen, onClose, item, onItemUpdated }: Item
                                     />
                                 ) : isMarkdown ? (
                                     <div className={styles.markdownContent}>
-                                        <ReactMarkdown>{content}</ReactMarkdown>
+                                        <ReactMarkdown
+                                            remarkPlugins={[remarkGfm, remarkBreaks]}
+                                            urlTransform={(url) => url.startsWith('saiverse://') ? url : defaultUrlTransform(url)}
+                                            components={{
+                                                a: ({ href, children }) => <SaiverseLink href={href}>{children}</SaiverseLink>,
+                                            }}
+                                        >{content}</ReactMarkdown>
                                     </div>
                                 ) : (
                                     <pre className={styles.documentContent}>

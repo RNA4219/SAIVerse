@@ -384,7 +384,7 @@ def _run_chronicle_generation(
     from sai_memory.arasuji import init_arasuji_tables
     from sai_memory.arasuji.storage import get_progress, update_progress
     from sai_memory.arasuji.generator import ArasujiGenerator
-    from model_configs import find_model_config
+    from saiverse.model_configs import find_model_config
     from llm_clients.factory import get_llm_client
 
     _update_job(job_id, status="running", message="Loading database...")
@@ -467,7 +467,7 @@ def _run_chronicle_generation(
         # Initialize LLM client
         _update_job(job_id, message="Initializing LLM client...")
         
-        env_model = os.getenv("MEMORY_WEAVE_MODEL", "gemini-2.0-flash")
+        env_model = os.getenv("MEMORY_WEAVE_MODEL", "gemini-2.5-flash-lite-preview-09-2025")
         model_to_use = model_name or env_model
         
         resolved_model_id, model_config = find_model_config(model_to_use)

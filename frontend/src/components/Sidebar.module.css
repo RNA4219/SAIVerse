@@ -168,13 +168,13 @@
 }
 
 .active {
-    background: #e0e7ff;
-    color: #4338ca;
+    background: #e0f7fa;
+    color: #0e7490;
     font-weight: 500;
 }
 
 .active:hover {
-    background: #dbeafe;
+    background: #cffafe;
 }
 
 /* Footer Settings */
@@ -355,12 +355,12 @@
 }
 
 :global([data-theme="dark"]) .active {
-    background: rgba(67, 56, 202, 0.3);
-    color: #e0e7ff;
+    background: rgba(6, 182, 212, 0.2);
+    color: #a5f3fc;
 }
 
 :global([data-theme="dark"]) .active:hover {
-    background: rgba(67, 56, 202, 0.4);
+    background: rgba(6, 182, 212, 0.3);
 }
 
 :global([data-theme="dark"]) .addBuildingBtn {

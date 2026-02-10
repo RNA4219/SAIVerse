@@ -11,13 +11,13 @@ import json
 import re
 
 from llm_clients.exceptions import LLMError
-from logging_config import log_sea_trace
+from saiverse.logging_config import log_sea_trace
 from sea.playbook_models import NodeType, PlaybookSchema, PlaybookValidationError, validate_playbook_graph
 from sea.langgraph_runner import compile_playbook
 from sea.cancellation import CancellationToken, ExecutionCancelledException
 from database.models import Playbook as PlaybookModel
-from model_configs import get_model_parameter_defaults
-from usage_tracker import get_usage_tracker
+from saiverse.model_configs import get_model_parameter_defaults
+from saiverse.usage_tracker import get_usage_tracker
 
 LOGGER = logging.getLogger(__name__)
 
@@ -293,6 +293,7 @@ class SEARuntime:
             playbook,
             llm_node_factory=lambda node_def: self._lg_llm_node(node_def, persona, building_id, playbook, event_callback),
             tool_node_factory=lambda node_def: self._lg_tool_node(node_def, persona, playbook, event_callback),
+            tool_call_node_factory=lambda node_def: self._lg_tool_call_node(node_def, persona, playbook, event_callback),
             speak_node=lambda state: self._lg_speak_node(state, persona, building_id, playbook, _lg_outputs, event_callback),
             think_node=lambda state: self._lg_think_node(state, persona, playbook, _lg_outputs, event_callback),
             say_node_factory=lambda node_def: self._lg_say_node(node_def, persona, building_id, playbook, _lg_outputs, event_callback),
@@ -321,7 +322,7 @@ class SEARuntime:
             # use that value instead of resolving from source
             if param_name in parent and parent[param_name] is not None:
                 value = parent[param_name]
-                LOGGER.debug("[sea][LangGraph] Using existing value for %s from parent: %s", param_name, str(value)[:200] if value else "(empty)")
+                LOGGER.debug("[sea][LangGraph] Using existing value for %s from parent: %s", param_name, str(value) if value else "(empty)")
             # Resolve value from parent_state or fallback
             elif source_key.startswith("parent."):
                 actual_key = source_key[7:]  # strip "parent."
@@ -329,7 +330,7 @@ class SEARuntime:
                 value = self._resolve_state_value(parent, actual_key)
                 if value is None:
                     value = ""
-                LOGGER.debug("[sea][LangGraph] Resolved %s from parent.%s: %s", param_name, actual_key, str(value)[:200] if value else "(empty)")
+                LOGGER.debug("[sea][LangGraph] Resolved %s from parent.%s: %s", param_name, actual_key, str(value) if value else "(empty)")
             elif source_key == "input":
                 value = user_input or ""
             else:
@@ -374,6 +375,7 @@ class SEARuntime:
             "_cancellation_token": cancellation_token,  # For node-level cancellation checks
             "pulse_usage_accumulator": usage_accumulator,  # Inherit from parent or create new
             "_activity_trace": activity_trace,  # Shared trace of exec/tool activities
+            "_intermediate_msgs": [],  # Track intermediate node outputs for profile-based context
             **inherited_vars,  # Add inherited variables from input_schema
         }
 
@@ -432,7 +434,7 @@ class SEARuntime:
                         self._store_structured_result(parent_state, key, value)
                     else:
                         parent_state[key] = value
-                    LOGGER.debug("[sea][LangGraph] Propagated %s to parent_state: %s", key, str(value)[:200])
+                    LOGGER.debug("[sea][LangGraph] Propagated %s to parent_state: %s", key, str(value))
 
         # Update execution state: playbook completed (LangGraph path)
         if hasattr(persona, "execution_state"):
@@ -483,10 +485,36 @@ class SEARuntime:
             schema_consumed = False
             prompt = None  # Will store the expanded prompt for memorize
             try:
-                base_msgs = state.get("messages", [])
+                # Determine base messages: use context_profile if set, otherwise legacy state["messages"]
+                _profile_name = getattr(node_def, "context_profile", None)
+                if _profile_name:
+                    from sea.playbook_models import CONTEXT_PROFILES
+                    _profile = CONTEXT_PROFILES.get(_profile_name)
+                    if _profile:
+                        _cache_key = f"_ctx_profile_{_profile_name}"
+                        if _cache_key not in state:
+                            state[_cache_key] = self._prepare_context(
+                                persona, building_id,
+                                state.get("inputs", {}).get("input") or None,
+                                _profile["requirements"],
+                                pulse_id=state.get("pulse_id"),
+                            )
+                            LOGGER.info("[sea] Prepared context for profile '%s' (node=%s, %d messages)",
+                                        _profile_name, node_id, len(state[_cache_key]))
+                        _profile_base = state[_cache_key]
+                        _intermediate = state.get("_intermediate_msgs", [])
+                        base_msgs = list(_profile_base) + list(_intermediate)
+                    else:
+                        LOGGER.warning("[sea] Unknown context_profile '%s' on node '%s', falling back to state messages", _profile_name, node_id)
+                        base_msgs = state.get("messages", [])
+                else:
+                    base_msgs = state.get("messages", [])
                 action_template = getattr(node_def, "action", None)
                 if action_template:
                     prompt = _format(action_template, variables)
+                    # Auto-wrap in <system> tags to distinguish from user messages
+                    if not prompt.lstrip().startswith("<system>"):
+                        prompt = f"<system>{prompt}</system>"
                     messages = list(base_msgs) + [{"role": "user", "content": prompt}]
                 else:
                     messages = list(base_msgs)
@@ -503,7 +531,7 @@ class SEARuntime:
                 # Inject model-specific system prompt if configured
                 _model_config_key = getattr(llm_client, "config_key", None)
                 if _model_config_key:
-                    from model_configs import get_model_system_prompt
+                    from saiverse.model_configs import get_model_system_prompt
                     _model_sys_prompt = get_model_system_prompt(_model_config_key)
                     if _model_sys_prompt:
                         _injected = False
@@ -557,7 +585,7 @@ class SEARuntime:
                             category="persona_speak",
                         )
                         # Accumulate into pulse total
-                        from model_configs import calculate_cost
+                        from saiverse.model_configs import calculate_cost
                         cost = calculate_cost(usage.model, usage.input_tokens, usage.output_tokens, usage.cached_tokens, usage.cache_write_tokens, cache_ttl=usage.cache_ttl)
                         self._accumulate_usage(state, usage.model, usage.input_tokens, usage.output_tokens, cost, usage.cached_tokens, usage.cache_write_tokens)
 
@@ -589,6 +617,8 @@ class SEARuntime:
                             # New behavior: use explicit output_keys
                             if function_call_key:
                                 state[f"{function_call_key}.name"] = result["tool_name"]
+                                # Store full args dict (for tool_call node dynamic execution)
+                                state[f"{function_call_key}.args"] = result["tool_args"] if isinstance(result["tool_args"], dict) else {}
                                 if isinstance(result["tool_args"], dict):
                                     for arg_name, arg_value in result["tool_args"].items():
                                         state[f"{function_call_key}.args.{arg_name}"] = arg_value
@@ -625,6 +655,8 @@ class SEARuntime:
                                 LOGGER.debug("[sea] Stored %s = (text, length=%d)", text_key, len(result["content"]))
                             if function_call_key:
                                 state[f"{function_call_key}.name"] = result["tool_name"]
+                                # Store full args dict (for tool_call node dynamic execution)
+                                state[f"{function_call_key}.args"] = result["tool_args"] if isinstance(result["tool_args"], dict) else {}
                                 if isinstance(result["tool_args"], dict):
                                     for arg_name, arg_value in result["tool_args"].items():
                                         state[f"{function_call_key}.args.{arg_name}"] = arg_value
@@ -657,8 +689,7 @@ class SEARuntime:
                         if output_keys_spec and text_key:
                             # New behavior: store in explicit text_key
                             state[text_key] = result["content"]
-                            content_preview = result["content"][:200] + "..." if len(result["content"]) > 200 else result["content"]
-                            LOGGER.info("[sea][llm] Stored state['%s'] = %s", text_key, content_preview)
+                            LOGGER.info("[sea][llm] Stored state['%s'] = %s", text_key, result["content"])
                             state["has_speak_content"] = True
                         else:
                             # Legacy behavior: no specific text storage (just in "last")
@@ -757,7 +788,7 @@ class SEARuntime:
                             )
                             LOGGER.info("[DEBUG] Usage recorded: model=%s in=%d out=%d cached=%d cache_write=%d", usage.model, usage.input_tokens, usage.output_tokens, usage.cached_tokens, usage.cache_write_tokens)
                             # Build llm_usage metadata for message
-                            from model_configs import calculate_cost, get_model_display_name
+                            from saiverse.model_configs import calculate_cost, get_model_display_name
                             cost = calculate_cost(usage.model, usage.input_tokens, usage.output_tokens, usage.cached_tokens, usage.cache_write_tokens, cache_ttl=usage.cache_ttl)
                             llm_usage_metadata = {
                                 "model": usage.model,
@@ -832,7 +863,7 @@ class SEARuntime:
                                 category="persona_speak",
                             )
                             # Build llm_usage metadata for message
-                            from model_configs import calculate_cost, get_model_display_name
+                            from saiverse.model_configs import calculate_cost, get_model_display_name
                             cost = calculate_cost(usage.model, usage.input_tokens, usage.output_tokens, usage.cached_tokens, usage.cache_write_tokens, cache_ttl=usage.cache_ttl)
                             llm_usage_metadata = {
                                 "model": usage.model,
@@ -903,8 +934,7 @@ class SEARuntime:
                         output_key = getattr(node_def, "output_key", None)
                         if output_key:
                             state[output_key] = text
-                            content_preview = text[:200] + "..." if len(text) > 200 else text
-                            LOGGER.info("[sea][llm] Stored plain text to state['%s'] = %s", output_key, content_preview)
+                            LOGGER.info("[sea][llm] Stored plain text to state['%s'] = %s", output_key, text)
 
                     # Process output_keys even in normal mode (no tools)
                     output_keys_spec = getattr(node_def, "output_keys", None)
@@ -913,8 +943,7 @@ class SEARuntime:
                             if "text" in mapping:
                                 text_key = mapping["text"]
                                 state[text_key] = text
-                                content_preview = text[:200] + "..." if len(text) > 200 else text
-                                LOGGER.info("[sea][llm] (normal mode) Stored state['%s'] = %s", text_key, content_preview)
+                                LOGGER.info("[sea][llm] (normal mode) Stored state['%s'] = %s", text_key, text)
                                 state["has_speak_content"] = True
                                 break
             except LLMError:
@@ -930,19 +959,28 @@ class SEARuntime:
             state["last"] = text
             state["messages"] = messages + [{"role": "assistant", "content": text}]
 
-            # Trace: log concise prompt→response summary
-            _prompt_preview = (prompt[:120] + "...") if prompt and len(prompt) > 120 else (prompt or "(no prompt)")
+            # Track intermediate messages for profile-based nodes in the same playbook
+            if "_intermediate_msgs" in state:
+                _im = list(state.get("_intermediate_msgs", []))
+                if prompt:
+                    _im.append({"role": "user", "content": prompt})
+                _im.append({"role": "assistant", "content": text})
+                state["_intermediate_msgs"] = _im
+
+            # Trace: log prompt→response (truncation handled by log_sea_trace)
+            _prompt_str = prompt or "(no prompt)"
             if schema_consumed:
                 _output_key = getattr(node_def, "output_key", None) or node_id
                 _out_val = state.get(_output_key, text)
                 if isinstance(_out_val, dict):
-                    _resp_preview = ", ".join(f"{k}={str(v)[:60]}" for k, v in list(_out_val.items())[:6])
+                    import json as _json
+                    _resp_str = _json.dumps(_out_val, ensure_ascii=False, default=str)
                 else:
-                    _resp_preview = str(_out_val)[:200]
-                log_sea_trace(playbook.name, node_id, "LLM", f"prompt=\"{_prompt_preview}\" → {{{_resp_preview}}}")
+                    _resp_str = str(_out_val)
+                log_sea_trace(playbook.name, node_id, "LLM", f"prompt=\"{_prompt_str}\" → {_resp_str}")
             else:
-                _resp_preview = str(text)[:200] if text else "(empty)"
-                log_sea_trace(playbook.name, node_id, "LLM", f"prompt=\"{_prompt_preview}\" → \"{_resp_preview}\"")
+                _resp_str = str(text) if text else "(empty)"
+                log_sea_trace(playbook.name, node_id, "LLM", f"prompt=\"{_prompt_str}\" → \"{_resp_str}\"")
 
             # Handle memorize option - save prompt and response to SAIMemory
             memorize_config = getattr(node_def, "memorize", None)
@@ -957,16 +995,19 @@ class SEARuntime:
                     memorize_tags = []
                 
                 # Save prompt (user role) - use the pre-expanded prompt variable
+                _memorize_ok = True
                 if prompt:
-                    self._store_memory(
+                    if not self._store_memory(
                         persona,
                         prompt,
                         role="user",
                         tags=list(memorize_tags),
                         pulse_id=pulse_id,
-                    )
-                    LOGGER.debug("[sea][llm] Memorized prompt (user): %s...", prompt[:100])
-                
+                    ):
+                        _memorize_ok = False
+                    else:
+                        LOGGER.debug("[sea][llm] Memorized prompt (user): %s", prompt)
+
                 # Save response (assistant role)
                 if text and text != "(error in llm node)":
                     # If structured output was consumed, format as JSON string for memory
@@ -976,14 +1017,19 @@ class SEARuntime:
                         content_to_save = json.dumps(text, ensure_ascii=False, indent=2)
                         LOGGER.debug("[sea][llm] Structured output formatted as JSON for memory")
 
-                    self._store_memory(
+                    if not self._store_memory(
                         persona,
                         content_to_save,
                         role="assistant",
                         tags=list(memorize_tags),
                         pulse_id=pulse_id,
-                    )
-                    LOGGER.debug("[sea][llm] Memorized response (assistant): %s...", str(content_to_save)[:100])
+                    ):
+                        _memorize_ok = False
+                    else:
+                        LOGGER.debug("[sea][llm] Memorized response (assistant): %s", str(content_to_save))
+
+                if not _memorize_ok and event_callback:
+                    event_callback({"type": "warning", "content": "記憶の保存に失敗しました。会話内容が記録されていない可能性があります。", "warning_code": "memorize_failed", "display": "toast"})
 
                 # Activity trace: record LLM memorize
                 if not playbook.name.startswith(("meta_", "sub_")):
@@ -997,8 +1043,7 @@ class SEARuntime:
 
             # Debug: log speak_content at end of LLM node
             speak_content = state.get("speak_content", "")
-            preview = speak_content[:100] + "..." if len(speak_content) > 100 else speak_content
-            LOGGER.info("[DEBUG] LLM node end: state['speak_content'] = '%s'", preview)
+            LOGGER.info("[DEBUG] LLM node end: state['speak_content'] = '%s'", speak_content)
 
             # Note: output_mapping in node definition handles state variable assignment
             # No special handling needed here anymore
@@ -1077,8 +1122,15 @@ class SEARuntime:
             persona: Persona object
             needs_structured_output: Whether this node requires structured output
         """
-        model_type = getattr(node_def, "model_type", "normal") or "normal"
-        LOGGER.info("[sea] Node model_type: %s (node_id=%s)", model_type, getattr(node_def, "id", "unknown"))
+        # Determine model_type: context_profile takes precedence over explicit model_type
+        _profile_name = getattr(node_def, "context_profile", None)
+        if _profile_name:
+            from sea.playbook_models import CONTEXT_PROFILES
+            _profile = CONTEXT_PROFILES.get(_profile_name)
+            model_type = _profile["model_type"] if _profile else (getattr(node_def, "model_type", "normal") or "normal")
+        else:
+            model_type = getattr(node_def, "model_type", "normal") or "normal"
+        LOGGER.info("[sea] Node model_type: %s (node_id=%s, profile=%s)", model_type, getattr(node_def, "id", "unknown"), _profile_name or "none")
 
         # First, select base client based on model_type
         if model_type == "lightweight":
@@ -1096,7 +1148,7 @@ class SEARuntime:
                 LOGGER.info("[sea] Using lightweight model: %s", lightweight_model_name)
                 try:
                     from llm_clients import get_llm_client
-                    from model_configs import get_context_length, get_model_provider
+                    from saiverse.model_configs import get_context_length, get_model_provider
                     lw_context = get_context_length(lightweight_model_name)
                     provider = get_model_provider(lightweight_model_name)
                     base_client = get_llm_client(lightweight_model_name, provider, lw_context)
@@ -1114,7 +1166,7 @@ class SEARuntime:
 
         # If structured output is needed, check if the selected model supports it
         if needs_structured_output:
-            from model_configs import supports_structured_output, get_agentic_model, get_context_length, get_model_provider
+            from saiverse.model_configs import supports_structured_output, get_agentic_model, get_context_length, get_model_provider
             if not supports_structured_output(base_model):
                 # Model doesn't support structured output, switch to agentic model
                 agentic_model = get_agentic_model()
@@ -1172,7 +1224,7 @@ class SEARuntime:
                 filtered = [types.Tool(function_declarations=all_matching_decls)]
                 LOGGER.info("[sea] Built Gemini tools spec: 1 Tool with %d function_declarations", len(all_matching_decls))
                 for decl in all_matching_decls:
-                    LOGGER.info("[sea] - Gemini function_declaration: name=%s, description=%s", decl.name, decl.description[:100] if decl.description else None)
+                    LOGGER.info("[sea] - Gemini function_declaration: name=%s, description=%s", decl.name, decl.description)
                     LOGGER.info("[sea]   parameters: %s", decl.parameters)
             else:
                 filtered = []
@@ -1189,7 +1241,7 @@ class SEARuntime:
     ) -> None:
         """Log LLM I/O to the unified LLM log file."""
         try:
-            from logging_config import log_llm_request, log_llm_response
+            from saiverse.logging_config import log_llm_request, log_llm_response
             persona_id = getattr(persona, "persona_id", None)
             persona_name = getattr(persona, "persona_name", None)
             source = f"sea/{playbook_name}"
@@ -1320,7 +1372,7 @@ class SEARuntime:
 
             if value is not None:
                 state[target_key] = value
-                LOGGER.debug("[sea] output_mapping: %s -> %s = %s", source_path, target_key, str(value)[:100])
+                LOGGER.debug("[sea] output_mapping: %s -> %s = %s", source_path, target_key, str(value))
             else:
                 LOGGER.warning("[sea] output_mapping: failed to resolve %s from %s (keys: %s)",
                              source_path, output_key,
@@ -1523,8 +1575,7 @@ class SEARuntime:
                         kwargs[arg_name] = value
 
                 # ===== Tool execution logging (centralized) =====
-                kwargs_preview = {k: (str(v)[:100] + "..." if len(str(v)) > 100 else str(v)) for k, v in kwargs.items()}
-                LOGGER.info("[sea][tool] CALL %s (persona=%s) args=%s", tool_name, persona_id, kwargs_preview)
+                LOGGER.info("[sea][tool] CALL %s (persona=%s) args=%s", tool_name, persona_id, kwargs)
                 
                 if tool_func is None:
                     LOGGER.error("[sea][tool] CRITICAL: Tool function '%s' not found in registry! TOOL_REGISTRY keys: %s", tool_name, list(TOOL_REGISTRY.keys()))
@@ -1533,15 +1584,16 @@ class SEARuntime:
 
                 # Execute tool with persona context
                 if persona_id and persona_dir:
-                    with persona_context(persona_id, persona_dir, manager_ref):
+                    with persona_context(persona_id, persona_dir, manager_ref, playbook_name=playbook.name):
                         result = tool_func(**kwargs) if callable(tool_func) else None
                 else:
                     result = tool_func(**kwargs) if callable(tool_func) else None
                 
                 # Log tool result
-                result_preview = str(result)[:200] + "..." if len(str(result)) > 200 else str(result)
+                result_str = str(result)
+                result_preview = result_str[:200] + "..." if len(result_str) > 200 else result_str
                 LOGGER.info("[sea][tool] RESULT %s -> %s", tool_name, result_preview)
-                log_sea_trace(playbook.name, node_id, "TOOL", f"action={tool_name} → {result_preview}")
+                log_sea_trace(playbook.name, node_id, "TOOL", f"action={tool_name} → {result_str}")
 
                 # Activity trace: record tool execution (skip infrastructure playbooks)
                 if not playbook.name.startswith(("meta_", "sub_")):
@@ -1558,7 +1610,7 @@ class SEARuntime:
                     for i, key in enumerate(output_keys):
                         if i < len(result):
                             state[key] = result[i]
-                            LOGGER.debug("[sea][LangGraph] Stored tuple[%d] in state[%s]: %s", i, key, str(result[i])[:200])
+                            LOGGER.debug("[sea][LangGraph] Stored tuple[%d] in state[%s]: %s", i, key, str(result[i]))
                     # Set last to first element (primary result)
                     state["last"] = str(result[0]) if result else ""
                 elif isinstance(result, tuple):
@@ -1573,6 +1625,104 @@ class SEARuntime:
             except Exception as exc:
                 state["last"] = f"Tool error: {exc}"
                 LOGGER.exception("SEA LangGraph tool %s failed", tool_name)
+            return state
+
+        return node
+
+    def _lg_tool_call_node(self, node_def: Any, persona: Any, playbook: PlaybookSchema, event_callback: Optional[Callable[[Dict[str, Any]], None]] = None):
+        """Execute a tool dynamically based on an LLM node's tool call decision.
+
+        Reads tool name and arguments from state (stored by an LLM node with
+        available_tools), looks up the tool in TOOL_REGISTRY, and executes it.
+        This enables agentic loops without per-tool branching.
+        """
+        from tools import TOOL_REGISTRY
+        from tools.context import persona_context
+
+        call_source = getattr(node_def, "call_source", "fc") or "fc"
+        output_key = getattr(node_def, "output_key", None)
+
+        async def node(state: dict):
+            # Check for cancellation
+            cancellation_token = state.get("_cancellation_token")
+            if cancellation_token:
+                cancellation_token.raise_if_cancelled()
+
+            node_id = getattr(node_def, "id", "tool_call")
+            if event_callback:
+                event_callback({"type": "status", "content": f"{playbook.name} / {node_id}", "playbook": playbook.name, "node": node_id})
+
+            # Resolve tool name and args from state
+            tool_name = self._resolve_state_value(state, f"{call_source}.name")
+            tool_args = self._resolve_state_value(state, f"{call_source}.args")
+
+            # Fallback to legacy state keys
+            if not tool_name:
+                tool_name = state.get("tool_name", "")
+                tool_args = state.get("tool_args", {})
+
+            if not tool_name:
+                error_msg = f"[sea][tool_call] No tool name found in state (call_source={call_source})"
+                LOGGER.error(error_msg)
+                state["last"] = error_msg
+                if output_key:
+                    state[output_key] = error_msg
+                return state
+
+            if not isinstance(tool_args, dict):
+                LOGGER.warning("[sea][tool_call] tool_args is not a dict (%s), using empty args", type(tool_args).__name__)
+                tool_args = {}
+
+            tool_func = TOOL_REGISTRY.get(tool_name)
+            if tool_func is None:
+                error_msg = f"[sea][tool_call] Tool '{tool_name}' not found in registry"
+                LOGGER.error(error_msg)
+                state["last"] = error_msg
+                if output_key:
+                    state[output_key] = error_msg
+                return state
+
+            persona_obj = state.get("persona_obj") or persona
+            persona_id = getattr(persona_obj, "persona_id", "unknown")
+
+            try:
+                persona_dir = getattr(persona_obj, "persona_log_path", None)
+                persona_dir = persona_dir.parent if persona_dir else Path.cwd()
+                manager_ref = getattr(persona_obj, "manager_ref", None)
+
+                LOGGER.info("[sea][tool_call] CALL %s (persona=%s) args=%s", tool_name, persona_id, tool_args)
+
+                if persona_id and persona_dir:
+                    with persona_context(persona_id, persona_dir, manager_ref, playbook_name=playbook.name):
+                        result = tool_func(**tool_args)
+                else:
+                    result = tool_func(**tool_args)
+
+                result_str = str(result)
+                result_preview = result_str[:500] + "..." if len(result_str) > 500 else result_str
+                LOGGER.info("[sea][tool_call] RESULT %s -> %s", tool_name, result_preview)
+                log_sea_trace(playbook.name, node_id, "TOOL_CALL", f"action={tool_name} args={tool_args} → {result_str}")
+
+                # Activity trace
+                if not playbook.name.startswith(("meta_", "sub_")):
+                    pb_display = playbook.display_name or playbook.name
+                    _at = state.get("_activity_trace")
+                    if isinstance(_at, list):
+                        _at.append({"action": "tool_call", "name": tool_name, "playbook": pb_display})
+                    if event_callback:
+                        event_callback({"type": "activity", "action": "tool_call", "name": tool_name, "playbook": pb_display, "status": "completed"})
+
+                state["last"] = result_str
+                if output_key:
+                    state[output_key] = result
+
+            except Exception as exc:
+                error_msg = f"Tool error ({tool_name}): {exc}"
+                state["last"] = error_msg
+                if output_key:
+                    state[output_key] = error_msg
+                LOGGER.exception("[sea][tool_call] %s failed", tool_name)
+
             return state
 
         return node
@@ -1611,7 +1761,23 @@ class SEARuntime:
                 sub_input = state.get("inputs", {}).get("input")
 
             eff_bid = self._effective_building_id(persona, building_id)
-            log_sea_trace(playbook.name, node_id, "EXEC", f"→ {sub_name} (input=\"{str(sub_input)[:150]}\")")
+
+            # Determine execution mode
+            execution = getattr(node_def, "execution", "inline") or "inline"
+            subagent_thread_id = None
+            subagent_parent_id = None
+
+            if execution == "subagent":
+                label = f"Subagent: {sub_name}"
+                subagent_thread_id, subagent_parent_id = self._start_subagent_thread(persona, label=label)
+                if not subagent_thread_id:
+                    LOGGER.warning("[sea][exec] Failed to start subagent thread for '%s', falling back to inline", sub_name)
+                    execution = "inline"  # Fallback
+                else:
+                    log_sea_trace(playbook.name, node_id, "EXEC", f"→ {sub_name} [subagent thread={subagent_thread_id}] (input=\"{str(sub_input)}\")")
+
+            if execution == "inline":
+                log_sea_trace(playbook.name, node_id, "EXEC", f"→ {sub_name} (input=\"{str(sub_input)}\")")
 
             try:
                 sub_outputs = await asyncio.to_thread(
@@ -1619,6 +1785,9 @@ class SEARuntime:
                 )
             except Exception as exc:
                 LOGGER.exception("SEA LangGraph exec sub-playbook failed")
+                # End subagent thread on error (no chronicle)
+                if execution == "subagent" and subagent_thread_id:
+                    self._end_subagent_thread(persona, subagent_thread_id, subagent_parent_id, generate_chronicle=False)
                 error_msg = f"Sub-playbook error: {type(exc).__name__}: {exc}"
                 state["last"] = error_msg
                 state["_exec_error"] = True
@@ -1632,18 +1801,31 @@ class SEARuntime:
                         "node": node_id,
                     })
                 # Record error to SAIMemory so the persona (and subsequent LLM calls) can see it
-                try:
-                    self._store_memory(
-                        persona, error_msg,
-                        role="system",
-                        tags=["error", "exec", str(sub_name).strip()],
-                        pulse_id=state.get("pulse_id"),
-                    )
-                except Exception:
-                    LOGGER.debug("Failed to store exec error to SAIMemory", exc_info=True)
+                if not self._store_memory(
+                    persona, error_msg,
+                    role="system",
+                    tags=["error", "exec", str(sub_name).strip()],
+                    pulse_id=state.get("pulse_id"),
+                ):
+                    LOGGER.warning("Failed to store exec error to SAIMemory for node %s", node_id)
+                    if event_callback:
+                        event_callback({
+                            "type": "warning",
+                            "content": "記憶の保存に失敗しました。会話内容が記録されていない可能性があります。",
+                            "warning_code": "memorize_failed",
+                            "display": "toast",
+                        })
                 if outputs is not None:
                     outputs.append(error_msg)
                 return state
+
+            # End subagent thread on success
+            if execution == "subagent" and subagent_thread_id:
+                gen_chronicle = getattr(node_def, "subagent_chronicle", True)
+                chronicle = self._end_subagent_thread(persona, subagent_thread_id, subagent_parent_id, generate_chronicle=gen_chronicle)
+                if chronicle:
+                    state["_subagent_chronicle"] = chronicle
+                log_sea_trace(playbook.name, node_id, "EXEC", f"← {sub_name} [subagent ended, chronicle={'yes' if chronicle else 'no'}]")
 
             # Success path: clear error flag
             state["_exec_error"] = False
@@ -1692,13 +1874,22 @@ class SEARuntime:
             LOGGER.debug("[memorize] available variables containing 'finalize': %s", 
                         {k: v for k, v in variables.items() if 'finalize' in str(k).lower()})
             memo_text = _format(action_template, variables)
-            LOGGER.debug("[memorize] memo_text=%s", memo_text[:100] if memo_text else None)
+            LOGGER.debug("[memorize] memo_text=%s", memo_text)
             role = getattr(node_def, "role", "assistant") or "assistant"
             tags = getattr(node_def, "tags", None)
             pulse_id = state.get("pulse_id")
             metadata_key = getattr(node_def, "metadata_key", None)
             metadata = state.get(metadata_key) if metadata_key else None
-            self._store_memory(persona, memo_text, role=role, tags=tags, pulse_id=pulse_id, metadata=metadata)
+            if not self._store_memory(persona, memo_text, role=role, tags=tags, pulse_id=pulse_id, metadata=metadata):
+                LOGGER.warning("Failed to store memory in MEMORIZE node %s", node_id)
+                if event_callback:
+                    event_callback({
+                        "type": "warning",
+                        "content": "記憶の保存に失敗しました。会話内容が記録されていない可能性があります。",
+                        "warning_code": "memorize_failed",
+                        "display": "toast",
+                    })
+            log_sea_trace(playbook.name, node_id, "MEMORIZE", f"role={role} tags={tags} text=\"{memo_text}\"")
             state["last"] = memo_text
             if outputs is not None:
                 outputs.append(memo_text)
@@ -1715,8 +1906,7 @@ class SEARuntime:
 
             # Debug: log speak_content at end of memorize node
             speak_content = state.get("speak_content", "")
-            preview = speak_content[:100] + "..." if len(speak_content) > 100 else speak_content
-            LOGGER.info("[DEBUG] memorize node end: state['speak_content'] = '%s'", preview)
+            LOGGER.info("[DEBUG] memorize node end: state['speak_content'] = '%s'", speak_content)
             
             return state
 
@@ -1789,8 +1979,7 @@ class SEARuntime:
 
             # Debug: log speak_content at end of say node
             speak_content = state.get("speak_content", "")
-            preview = speak_content[:100] + "..." if len(speak_content) > 100 else speak_content
-            LOGGER.info("[DEBUG] say node end: state['speak_content'] = '%s'", preview)
+            LOGGER.info("[DEBUG] say node end: state['speak_content'] = '%s'", speak_content)
             
             return state
         return node
@@ -1842,7 +2031,23 @@ class SEARuntime:
             })
             sub_input = _format(template, variables)
             eff_bid = self._effective_building_id(persona, building_id)
-            log_sea_trace(playbook.name, node_id, "SUBPLAY", f"→ {sub_name} (input=\"{str(sub_input)[:150]}\")")
+
+            # Determine execution mode
+            execution = getattr(node_def, "execution", "inline") or "inline"
+            subagent_thread_id = None
+            subagent_parent_id = None
+
+            if execution == "subagent":
+                label = f"Subagent: {sub_name}"
+                subagent_thread_id, subagent_parent_id = self._start_subagent_thread(persona, label=label)
+                if not subagent_thread_id:
+                    LOGGER.warning("[sea][subplay] Failed to start subagent thread for '%s', falling back to inline", sub_name)
+                    execution = "inline"  # Fallback
+                else:
+                    log_sea_trace(playbook.name, node_id, "SUBPLAY", f"→ {sub_name} [subagent thread={subagent_thread_id}] (input=\"{str(sub_input)}\")")
+
+            if execution == "inline":
+                log_sea_trace(playbook.name, node_id, "SUBPLAY", f"→ {sub_name} (input=\"{str(sub_input)}\")")
 
             # Execute subplaybook
             # Note: We call _run_playbook directly (not via asyncio.to_thread) to keep
@@ -1852,8 +2057,20 @@ class SEARuntime:
                 sub_outputs = self._run_playbook(sub_pb, persona, eff_bid, sub_input, auto_mode, True, state, event_callback)
             except Exception as exc:
                 LOGGER.exception("[sea][subplay] Failed to execute subplaybook '%s'", sub_name)
+                # End subagent thread on error (no chronicle)
+                if execution == "subagent" and subagent_thread_id:
+                    self._end_subagent_thread(persona, subagent_thread_id, subagent_parent_id, generate_chronicle=False)
                 state["last"] = f"Sub-playbook error: {exc}"
                 return state
+
+            # End subagent thread on success
+            if execution == "subagent" and subagent_thread_id:
+                gen_chronicle = getattr(node_def, "subagent_chronicle", True)
+                chronicle = self._end_subagent_thread(persona, subagent_thread_id, subagent_parent_id, generate_chronicle=gen_chronicle)
+                if chronicle:
+                    state["_subagent_chronicle"] = chronicle
+                log_sea_trace(playbook.name, node_id, "SUBPLAY", f"← {sub_name} [subagent ended, chronicle={'yes' if chronicle else 'no'}]")
+
             last_text = sub_outputs[-1] if sub_outputs else ""
             state["last"] = last_text
 
@@ -1917,7 +2134,7 @@ class SEARuntime:
             result = _format(value_template, state)
             if result == value_template and "{" in value_template:
                 # Template was not expanded - log for debugging
-                LOGGER.debug("[sea][set] Template not expanded. Keys in state: %s", list(state.keys())[:20])
+                LOGGER.debug("[sea][set] Template not expanded. Keys in state: %s", list(state.keys()))
             return result
         except Exception as exc:
             LOGGER.warning("[sea][set] _format failed: %s", exc)
@@ -1970,6 +2187,101 @@ class SEARuntime:
         except Exception as exc:
             LOGGER.warning("[sea][set] Failed to evaluate expression '%s': %s", expr, exc)
             return 0
+
+    # ---------------- Subagent Thread Helpers -----------------
+
+    def _start_subagent_thread(self, persona, label: Optional[str] = None):
+        """Create a temporary Stelis thread and switch the active thread to it.
+
+        Used by subplay/exec nodes with execution='subagent' to isolate
+        sub-playbook execution in a temporary thread.
+
+        Returns:
+            (thread_id, parent_thread_id) on success, (None, None) on failure.
+        """
+        memory_adapter = getattr(persona, "sai_memory", None)
+        if not memory_adapter:
+            LOGGER.warning("[subagent] No memory adapter found for persona %s", persona.persona_id)
+            return None, None
+
+        # Check depth limit (subagent uses max_depth=2 to prevent deep nesting)
+        if not memory_adapter.can_start_stelis(max_depth=2):
+            LOGGER.warning("[subagent] Stelis max depth exceeded for persona %s", persona.persona_id)
+            return None, None
+
+        # Get current thread as parent
+        parent_thread_id = memory_adapter.get_current_thread()
+        if parent_thread_id is None:
+            parent_thread_id = memory_adapter._thread_id(None)
+
+        # Create a new Stelis thread (no anchor message — subagent is transparent)
+        stelis = memory_adapter.start_stelis_thread(
+            parent_thread_id=parent_thread_id,
+            window_ratio=0.8,
+            max_depth=2,
+            label=label or "Subagent",
+        )
+
+        if not stelis:
+            LOGGER.error("[subagent] Failed to create subagent thread for persona %s", persona.persona_id)
+            return None, None
+
+        # Switch to the new thread
+        memory_adapter.set_active_thread(stelis.thread_id)
+        LOGGER.info(
+            "[subagent] Started subagent thread %s (parent=%s, label=%s)",
+            stelis.thread_id, parent_thread_id, label,
+        )
+        return stelis.thread_id, parent_thread_id
+
+    def _end_subagent_thread(
+        self,
+        persona,
+        thread_id: str,
+        parent_thread_id: str,
+        generate_chronicle: bool = True,
+    ) -> Optional[str]:
+        """End a subagent thread and switch back to the parent thread.
+
+        Args:
+            generate_chronicle: If True, generate a Chronicle summary before ending.
+
+        Returns:
+            Chronicle summary string if generated, else None.
+        """
+        memory_adapter = getattr(persona, "sai_memory", None)
+        if not memory_adapter:
+            return None
+
+        chronicle_summary = None
+        if generate_chronicle:
+            stelis_info = memory_adapter.get_stelis_info(thread_id)
+            chronicle_prompt = stelis_info.chronicle_prompt if stelis_info else None
+            chronicle_summary = self._generate_stelis_chronicle(
+                persona, thread_id, chronicle_prompt
+            )
+            if chronicle_summary:
+                LOGGER.info(
+                    "[subagent] Generated Chronicle for thread %s: %s...",
+                    thread_id, chronicle_summary[:100],
+                )
+
+        # End the Stelis thread
+        success = memory_adapter.end_stelis_thread(
+            thread_id=thread_id,
+            status="completed",
+            chronicle_summary=chronicle_summary,
+        )
+        if not success:
+            LOGGER.error("[subagent] Failed to end subagent thread %s", thread_id)
+
+        # Switch back to parent thread
+        memory_adapter.set_active_thread(parent_thread_id)
+        LOGGER.info(
+            "[subagent] Ended subagent thread %s, returned to parent %s",
+            thread_id, parent_thread_id,
+        )
+        return chronicle_summary
 
     # ---------------- Stelis Thread Nodes -----------------
 
@@ -2197,8 +2509,8 @@ class SEARuntime:
                 current_thread_id, parent_thread_id
             )
 
-            _chron_preview = (chronicle_summary[:120] + "...") if chronicle_summary and len(chronicle_summary) > 120 else (chronicle_summary or "(none)")
-            log_sea_trace(playbook.name, node_id, "STELIS_END", f"thread={current_thread_id} chronicle=\"{_chron_preview}\"")
+            _chron_str = chronicle_summary or "(none)"
+            log_sea_trace(playbook.name, node_id, "STELIS_END", f"thread={current_thread_id} chronicle=\"{_chron_str}\"")
 
             # Emit event for UI
             if event_callback:
@@ -2265,7 +2577,7 @@ class SEARuntime:
             if client is None:
                 # Fallback: create a temporary client
                 from llm_clients import get_llm_client
-                from model_configs import get_context_length, get_model_provider
+                from saiverse.model_configs import get_context_length, get_model_provider
 
                 lightweight_model = getattr(persona, "lightweight_model", None) or _get_default_lightweight_model()
                 lw_context = get_context_length(lightweight_model)
@@ -2335,14 +2647,22 @@ class SEARuntime:
         tags: Optional[List[str]] = None,
         pulse_id: Optional[str] = None,
         metadata: Optional[Dict[str, Any]] = None,
-    ) -> None:
+    ) -> bool:
+        """Store a message to SAIMemory. Returns True on success, False on failure."""
         if not text:
-            return
+            return True
         adapter = getattr(persona, "sai_memory", None)
         try:
             if adapter and adapter.is_ready():
                 current_thread = adapter.get_current_thread()
                 LOGGER.debug("[_store_memory] Active thread: %s (persona_id=%s)", current_thread, getattr(persona, "persona_id", None))
+                # If no active thread, initialize the default __persona__ thread
+                if current_thread is None:
+                    pid = getattr(persona, "persona_id", None) or "unknown"
+                    default_thread = f"{pid}:{adapter._PERSONA_THREAD_SUFFIX}"
+                    adapter.set_active_thread(default_thread)
+                    current_thread = default_thread
+                    LOGGER.info("[_store_memory] No active thread for %s — initialized default: %s", pid, default_thread)
                 message = {"role": role or "assistant", "content": text}
                 clean_tags = [str(tag) for tag in (tags or []) if tag]
                 # Add pulse:uuid tag
@@ -2366,8 +2686,10 @@ class SEARuntime:
                 # Pass thread_suffix to ensure message is saved to correct thread
                 thread_suffix = current_thread.split(":", 1)[1] if ":" in current_thread else current_thread
                 adapter.append_persona_message(message, thread_suffix=thread_suffix)
+            return True
         except Exception:
-            LOGGER.debug("memorize node not stored", exc_info=True)
+            LOGGER.warning("memorize node not stored", exc_info=True)
+            return False
 
     def _append_tool_result_message(
         self,
@@ -2486,7 +2808,7 @@ class SEARuntime:
                     }
                 )
         except Exception:
-            LOGGER.debug("think message not stored", exc_info=True)
+            LOGGER.warning("think message not stored", exc_info=True)
 
     def _notify_unity_speak(self, persona: Any, text: str) -> None:
         """Send persona speak event to Unity Gateway if connected."""
@@ -2517,7 +2839,7 @@ class SEARuntime:
         override = getattr(self.manager, "max_history_messages_override", None) if self.manager else None
         if override is not None:
             return override
-        from model_configs import get_default_max_history_messages
+        from saiverse.model_configs import get_default_max_history_messages
         persona_model = getattr(persona, "model", None)
         if persona_model:
             return get_default_max_history_messages(persona_model)
@@ -2528,7 +2850,7 @@ class SEARuntime:
         override = getattr(self.manager, "metabolism_keep_messages_override", None) if self.manager else None
         if override is not None:
             return override
-        from model_configs import get_metabolism_keep_messages
+        from saiverse.model_configs import get_metabolism_keep_messages
         persona_model = getattr(persona, "model", None)
         if persona_model:
             return get_metabolism_keep_messages(persona_model)
@@ -2581,7 +2903,7 @@ class SEARuntime:
         - Others (implicit/no cache): 1200s (20 min)
         """
         try:
-            from model_configs import get_cache_config
+            from saiverse.model_configs import get_cache_config
             cache_config = get_cache_config(model_key)
             cache_type = cache_config.get("type", "implicit")
             if cache_type == "explicit":
@@ -2757,13 +3079,13 @@ class SEARuntime:
     ) -> None:
         """Generate Chronicle entries from all unprocessed messages."""
         from llm_clients.factory import get_llm_client
-        from model_configs import find_model_config
+        from saiverse.model_configs import find_model_config
         from sai_memory.arasuji import init_arasuji_tables
         from sai_memory.arasuji.generator import ArasujiGenerator, DEFAULT_BATCH_SIZE
         from sai_memory.memory.storage import get_messages_paginated
 
         # Get LLM client using MEMORY_WEAVE_MODEL
-        model_name = os.getenv("MEMORY_WEAVE_MODEL", "gemini-2.0-flash")
+        model_name = os.getenv("MEMORY_WEAVE_MODEL", "gemini-2.5-flash-lite-preview-09-2025")
         model_id, model_config = find_model_config(model_name)
         if not model_config:
             LOGGER.warning("[metabolism] Model '%s' not found for Chronicle generation", model_name)
@@ -2824,7 +3146,7 @@ class SEARuntime:
 
             # 1. Common prompt (world setting, framework explanation)
             common_prompt_template = getattr(persona, "common_prompt", None)
-            LOGGER.debug("common_prompt_template is %s (type=%s)", common_prompt_template[:100] if common_prompt_template else None, type(common_prompt_template))
+            LOGGER.debug("common_prompt_template is %s (type=%s)", common_prompt_template, type(common_prompt_template))
             if common_prompt_template:
                 try:
                     # Get building info for variable expansion
@@ -3072,7 +3394,7 @@ class SEARuntime:
                             # Metabolism disabled — traditional count/char retrieval
                             max_hist_msgs = getattr(self.manager, "max_history_messages_override", None) if self.manager else None
                             if max_hist_msgs is None:
-                                from model_configs import get_default_max_history_messages
+                                from saiverse.model_configs import get_default_max_history_messages
                                 persona_model = getattr(persona, "model", None)
                                 if persona_model:
                                     max_hist_msgs = get_default_max_history_messages(persona_model)
@@ -3177,8 +3499,8 @@ class SEARuntime:
 
         # ---- Token budget check ----
         try:
-            from token_estimator import estimate_messages_tokens
-            from model_configs import get_context_length, get_model_provider
+            from saiverse.token_estimator import estimate_messages_tokens
+            from saiverse.model_configs import get_context_length, get_model_provider
 
             persona_model = getattr(persona, "model", None)
             if persona_model:
@@ -3271,8 +3593,8 @@ class SEARuntime:
         Returns a dict with messages, token estimates, cost estimates, and model info.
         Does NOT record the user message to history or call any LLM.
         """
-        from token_estimator import estimate_messages_tokens, estimate_image_tokens
-        from model_configs import (
+        from saiverse.token_estimator import estimate_messages_tokens, estimate_image_tokens
+        from saiverse.model_configs import (
             get_model_provider, get_context_length,
             get_model_display_name, get_model_pricing, calculate_cost,
         )
@@ -3299,7 +3621,7 @@ class SEARuntime:
             messages.append({"role": "user", "content": user_input})
 
         # Classify each message into a section
-        persona_model = getattr(persona, "model", None) or "gemini-2.0-flash"
+        persona_model = getattr(persona, "model", None) or "gemini-2.5-flash-lite-preview-09-2025"
         provider = get_model_provider(persona_model)
 
         section_order = [
@@ -3617,6 +3939,14 @@ class SEARuntime:
                 return None
             if not rec or not self._visible(rec, persona, building_id):
                 return None
+            # dev_only playbooks require developer mode
+            if getattr(rec, "dev_only", False):
+                dev_mode = False
+                if self.manager and hasattr(self.manager, "state"):
+                    dev_mode = getattr(self.manager.state, "developer_mode", False)
+                if not dev_mode:
+                    LOGGER.debug("[sea] playbook '%s' is dev_only but developer mode is off", name)
+                    return None
             try:
                 data = json.loads(rec.nodes_json)
                 pb = PlaybookSchema(**data)

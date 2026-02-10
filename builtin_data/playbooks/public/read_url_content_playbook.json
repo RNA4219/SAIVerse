@@ -8,65 +8,39 @@
             "description": "読み込みたいURL"
         }
     ],
-    "context_requirements": {
-        "history_depth": "full",
-        "history_balanced": false,
-        "include_internal": false,
-        "system_prompt": true,
-        "memory_weave": true,
-        "working_memory": false,
-        "inventory": false,
-        "building_items": false,
-        "available_playbooks": false,
-        "visual_context": false,
-        "realtime_context": true
-    },
     "router_callable": true,
     "nodes": [
         {
-            "id": "extract_url",
-            "type": "llm",
-            "action": "<system>入力からURLを抽出してください。複数ある場合は最初のものを選択。URLがない場合はnullを返してください。</system>",
-            "next": "read",
-            "response_schema": {
-                "type": "object",
-                "properties": {
-                    "url": {
-                        "type": "string",
-                        "description": "抽出したURL"
-                    },
-                    "max_chars": {
-                        "type": "integer",
-                        "description": "取得する最大文字数（省略時8000）"
-                    }
-                },
-                "required": [
-                    "url"
-                ]
+            "id": "init",
+            "type": "set",
+            "assignments": {
+                "url": "{input}",
+                "max_chars": 8000
             },
-            "output_key": "url_args"
+            "next": "read"
         },
         {
             "id": "read",
             "type": "tool",
             "action": "read_url_content",
             "args_input": {
-                "url": "url_args.url",
-                "max_chars": "url_args.max_chars"
+                "url": "url",
+                "max_chars": "max_chars"
             },
             "next": "record"
         },
         {
             "id": "record",
             "type": "memorize",
-            "action": "<system>```{last}```\n\nこれらの情報はユーザーには見えていません。内容を要約または引用して伝えてください。</system>",
+            "action": "```{last}```\n\nこれらの情報はユーザーには見えていません。内容を要約または引用して伝えてください。",
             "role": "user",
             "tags": [
-                "tool",
-                "read_url_content"
+                "internal",
+                "read_url_content",
+                "playbook_result"
             ],
             "next": null
         }
     ],
-    "start_node": "extract_url"
+    "start_node": "init"
 }

@@ -69,6 +69,32 @@
     letter-spacing: 0.05em;
 }
 
+.collapsibleTitle {
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: #666;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    cursor: pointer;
+    user-select: none;
+}
+
+.collapsibleTitle:hover {
+    color: #444;
+}
+
+.chevron {
+    transition: transform 0.2s ease;
+    transform: rotate(-90deg);
+}
+
+.chevronOpen {
+    transform: rotate(0deg);
+}
+
 .formGroup {
     display: flex;
     flex-direction: column;
@@ -178,5 +204,13 @@
 
 :global([data-theme="dark"]) .cancelBtn {
     border-color: #444;
+    color: #ccc;
+}
+
+:global([data-theme="dark"]) .collapsibleTitle {
+    color: #999;
+}
+
+:global([data-theme="dark"]) .collapsibleTitle:hover {
     color: #ccc;
 }

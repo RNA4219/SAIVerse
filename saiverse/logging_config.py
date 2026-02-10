@@ -16,9 +16,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
-# Determine project root
-PROJECT_ROOT = Path(__file__).parent
-LOGS_BASE_DIR = PROJECT_ROOT / "user_data" / "logs"
+# Log directory inside user_data
+from .data_paths import USER_DATA_DIR as _USER_DATA_DIR
+LOGS_BASE_DIR = _USER_DATA_DIR / "logs"
 
 # Session-specific log directory (created once per startup)
 _session_log_dir: Optional[Path] = None
@@ -347,13 +347,14 @@ def get_sea_trace_logger() -> logging.Logger:
 
 
 def log_sea_trace(playbook: str, node_id: str, node_type: str, detail: str = "") -> None:
-    """Log a concise SEA node execution trace entry.
+    """Log a SEA node execution trace entry.
 
     Output format: ``HH:MM:SS playbook/node_id [TYPE] detail``
+
+    No truncation — sea_trace.log is a file-only logger, not console.
     """
     logger = get_sea_trace_logger()
-    truncated = (detail[:300] + "...") if len(detail) > 300 else detail
-    logger.debug("%s/%s [%s] %s", playbook, node_id, node_type.upper(), truncated)
+    logger.debug("%s/%s [%s] %s", playbook, node_id, node_type.upper(), detail)
 
 
 def get_timeout_diagnostics_log_path() -> Path:

@@ -8,26 +8,13 @@
             "description": "User request about item interaction"
         }
     ],
-    "context_requirements": {
-        "history_depth": "full",
-        "history_balanced": false,
-        "include_internal": false,
-        "system_prompt": true,
-        "memory_weave": true,
-        "working_memory": false,
-        "inventory": true,
-        "building_items": true,
-        "available_playbooks": false,
-        "visual_context": false,
-        "realtime_context": true
-    },
     "router_callable": true,
     "nodes": [
         {
             "id": "decide_action",
             "type": "llm",
-            "model_type": "lightweight",
-            "action": "ユーザーの要求を分析し、アイテム操作の種類を決定してください。\n\n## 操作の種類（必ず1つ選択）\n- **view**: アイテムの内容を閲覧する（画像を見る、ドキュメントを読む、内容を確認する）\n- **pickup**: 建物にあるアイテムを自分のインベントリに拾う（「拾う」「取る」「持つ」）\n- **place**: 自分のインベントリから建物にアイテムを置く（「置く」「渡す」「出す」）\n- **use**: アイテムを使用する（説明の更新、内容の編集、その他アイテム固有の効果）\n\n## 選択の注意点\n- 「拾う」「取る」等の要求 → **pickup**を選択\n- 「見せて」「読んで」「確認して」等の要求 → **view**を選択\n- 「置いて」「渡して」等の要求 → **place**を選択\n- 「書き換えて」「修正して」「使って」等の要求 → **use**を選択\n\n## アイテム位置の制約\n- pickup: 建物内のアイテムのみ対象\n- place: インベントリのアイテムのみ対象\n- view: 建物内またはインベントリのアイテムが対象\n- use: 建物内またはインベントリのアイテムが対象",
+            "context_profile": "router",
+            "action": "アイテム操作の種類を決定してください。回答はconditional_nextで分岐に使われます。\n\n## 操作の種類（必ず1つ選択）\n- **view**: アイテムの内容を閲覧する（画像を見る、ドキュメントを読む、内容を確認する）\n- **pickup**: 建物にあるアイテムを自分のインベントリに拾う（「拾う」「取る」「持つ」）\n- **place**: 自分のインベントリから建物にアイテムを置く（「置く」「渡す」「出す」）\n- **use**: アイテムを使用する（説明の更新、内容の編集、その他アイテム固有の効果）\n\n## 選択の注意点\n- 「拾う」「取る」等の要求 → **pickup**を選択\n- 「見せて」「読んで」「確認して」等の要求 → **view**を選択\n- 「置いて」「渡して」等の要求 → **place**を選択\n- 「書き換えて」「修正して」「使って」等の要求 → **use**を選択\n\n## アイテム位置の制約\n- pickup: 建物内のアイテムのみ対象\n- place: インベントリのアイテムのみ対象\n- view: 建物内またはインベントリのアイテムが対象\n- use: 建物内またはインベントリのアイテムが対象",
             "next": null,
             "response_schema": {
                 "type": "object",
@@ -63,6 +50,9 @@
                 ]
             },
             "output_key": "params",
+            "memorize": {
+                "tags": ["internal", "item_action"]
+            },
             "conditional_next": {
                 "field": "params.action",
                 "cases": {
@@ -89,8 +79,9 @@
             "action": "【アイテム閲覧】{params.item_name}\n\n{view_result}",
             "role": "assistant",
             "tags": [
-                "item",
-                "view"
+                "internal",
+                "item_action",
+                "playbook_result"
             ],
             "next": null
         },
@@ -110,8 +101,9 @@
             "action": "【アイテム取得】{params.item_name}を拾った。\n結果: {pickup_result}",
             "role": "assistant",
             "tags": [
-                "item",
-                "pickup"
+                "internal",
+                "item_action",
+                "playbook_result"
             ],
             "next": null
         },
@@ -131,15 +123,17 @@
             "action": "【アイテム配置】{params.item_name}を置いた。\n結果: {place_result}",
             "role": "assistant",
             "tags": [
-                "item",
-                "place"
+                "internal",
+                "item_action",
+                "playbook_result"
             ],
             "next": null
         },
         {
             "id": "prepare_use",
             "type": "llm",
-            "action": "アイテム「{params.item_name}」を使用します。ユーザーの要求に基づいて、使用方法をJSON形式で生成してください。\n\n## 使用タイプ\n- update_description: アイテムの説明文を更新する\n- patch_content: ドキュメントの内容を部分的に修正する\n\n## JSON形式\n```json\n{\"action_type\": \"update_description\", \"description\": \"新しい説明文\"}\n```\nまたは\n```json\n{\"action_type\": \"patch_content\", \"patch\": \"修正内容\"}\n```",
+            "context_profile": "conversation",
+            "action": "アイテム「{params.item_name}」の使用方法をJSON形式で生成してください。結果はitem_useツールに渡されます。\n\n## 使用タイプ\n- update_description: アイテムの説明文を更新する\n- patch_content: ドキュメントの内容を部分的に修正する\n\n## JSON形式\n```json\n{\"action_type\": \"update_description\", \"description\": \"新しい説明文\"}\n```\nまたは\n```json\n{\"action_type\": \"patch_content\", \"patch\": \"修正内容\"}\n```",
             "response_schema": {
                 "type": "object",
                 "properties": {
@@ -172,8 +166,9 @@
             "action": "【アイテム使用】{params.item_name}を使用した。\n使用内容: {use_params.action_json}\n結果: {use_result}",
             "role": "assistant",
             "tags": [
-                "item",
-                "use"
+                "internal",
+                "item_action",
+                "playbook_result"
             ],
             "next": null
         }

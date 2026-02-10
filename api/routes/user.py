@@ -82,16 +82,22 @@ def get_buildings(manager = Depends(get_manager)):
         "city_id": getattr(manager, 'city_id', None)
     }
 
+class _Unset:
+    """Sentinel to distinguish 'not provided' from None."""
+    pass
+
+_UNSET = _Unset()
+
 class UpdateProfileRequest(BaseModel):
     display_name: str
-    avatar: Optional[str] = None
-    email: Optional[str] = None
+    avatar: Optional[str] = _UNSET
+    email: Optional[str] = _UNSET
 
 @router.patch("/me")
 def update_user_profile(req: UpdateProfileRequest, manager = Depends(get_manager)):
     """Update current user profile (Hardcoded to User ID 1 for now)."""
     from database.models import User
-    
+
     session = manager.SessionLocal()
     try:
         # Assuming User ID 1 as per instruction
@@ -100,16 +106,41 @@ def update_user_profile(req: UpdateProfileRequest, manager = Depends(get_manager
             # Create if missing? Or error? Error likely safer but user said "fixed to 1".
             # For robustness, let's just error if not found.
             raise HTTPException(status_code=404, detail="User not found")
-        
+
         user.USERNAME = req.display_name
-        user.AVATAR_IMAGE = req.avatar
-        user.MAILADDRESS = req.email
+        if not isinstance(req.avatar, _Unset):
+            user.AVATAR_IMAGE = req.avatar
+        if not isinstance(req.email, _Unset):
+            user.MAILADDRESS = req.email
+
+        # Update user_room building names to match the new username
+        from database.models import Building as BuildingModel, City as CityModel
+        new_room_name = f"{req.display_name}の部屋"
+        all_cities = session.query(CityModel).all()
+        for city in all_cities:
+            user_room_id = f"user_room_{city.CITYNAME}"
+            user_room = session.query(BuildingModel).filter_by(
+                BUILDINGID=user_room_id
+            ).first()
+            if user_room:
+                _log.info(
+                    "Updating building name: %s -> '%s'",
+                    user_room_id, new_room_name,
+                )
+                user_room.BUILDINGNAME = new_room_name
+
         session.commit()
-        
+
         # Update Runtime Manager State so UI reflects it immediately via status polling
         manager.state.user_display_name = req.display_name
-        manager.state.user_avatar_data = req.avatar
-        
+        if not isinstance(req.avatar, _Unset):
+            manager.state.user_avatar_data = req.avatar
+
+        # Update in-memory Building objects for user_rooms
+        for building in manager.buildings:
+            if building.building_id.startswith("user_room_"):
+                building.name = new_room_name
+
         return {"success": True}
     except Exception as e:
         session.rollback()

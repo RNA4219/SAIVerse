@@ -8,7 +8,7 @@ from typing import List, Dict, Any, Optional
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from api.deps import get_manager
-from model_configs import (
+from saiverse.model_configs import (
     get_model_choices_with_display_names,
     get_model_parameters,
     get_model_parameter_defaults,
@@ -82,7 +82,7 @@ def get_models():
 @router.post("/reload-models")
 def reload_models():
     """Reload model configurations from disk without restarting the server."""
-    from model_configs import reload_configs
+    from saiverse.model_configs import reload_configs
 
     reload_configs()
     choices = get_model_choices_with_display_names()
@@ -92,14 +92,18 @@ def reload_models():
     }
 
 @router.get("/playbooks", response_model=List[PlaybookInfo])
-def get_playbooks():
+def get_playbooks(manager=Depends(get_manager)):
     """List available user-selectable playbooks with input_schema."""
     from database.session import SessionLocal
     from database.models import Playbook
 
+    developer_mode = manager.state.developer_mode
     db = SessionLocal()
     try:
-        playbooks = db.query(Playbook).filter(Playbook.user_selectable == True).all()
+        query = db.query(Playbook).filter(Playbook.user_selectable == True)
+        if not developer_mode:
+            query = query.filter(Playbook.dev_only == False)
+        playbooks = query.all()
         result = []
         for pb in playbooks:
             # Parse schema_json to get input_schema
@@ -273,7 +277,7 @@ def get_current_config(manager = Depends(get_manager)):
         current_values.update(manager.model_parameter_overrides)
 
     # Max history messages
-    from model_configs import get_default_max_history_messages, get_metabolism_keep_messages
+    from saiverse.model_configs import get_default_max_history_messages, get_metabolism_keep_messages
     override = getattr(manager, "max_history_messages_override", None)
     model_default = get_default_max_history_messages(current_model)
 
@@ -345,7 +349,7 @@ def set_model(req: UpdateModelRequest, manager = Depends(get_manager)):
         current_values.update(manager.model_parameter_overrides)
 
     # Max history messages (reset override on model change)
-    from model_configs import get_default_max_history_messages, get_metabolism_keep_messages
+    from saiverse.model_configs import get_default_max_history_messages, get_metabolism_keep_messages
     manager.max_history_messages_override = None
     model_default = get_default_max_history_messages(current_model)
 
@@ -387,6 +391,50 @@ def get_global_auto(manager = Depends(get_manager)):
 def set_global_auto(req: GlobalAutoRequest, manager = Depends(get_manager)):
     """Set global autonomous mode status."""
     manager.state.global_auto_enabled = req.enabled
+    return {"success": True, "enabled": req.enabled}
+
+
+class DeveloperModeRequest(BaseModel):
+    enabled: bool
+
+
+@router.get("/developer-mode")
+def get_developer_mode(manager=Depends(get_manager)):
+    """Get developer mode status."""
+    return {"enabled": manager.state.developer_mode}
+
+
+@router.post("/developer-mode")
+def set_developer_mode(req: DeveloperModeRequest, manager=Depends(get_manager)):
+    """Set developer mode status.
+
+    When turning OFF, also disables global auto mode and
+    sets all personas' interaction_mode to 'manual'.
+    """
+    manager.state.developer_mode = req.enabled
+
+    if not req.enabled:
+        # Disable global auto mode
+        manager.state.global_auto_enabled = False
+
+        # Set all personas to manual mode
+        from database.session import SessionLocal
+        from database.models import AI
+        db = SessionLocal()
+        try:
+            db.query(AI).update({AI.INTERACTION_MODE: "manual"})
+            db.commit()
+        except Exception:
+            _log.warning("Failed to reset interaction modes", exc_info=True)
+            db.rollback()
+        finally:
+            db.close()
+
+        # Update in-memory persona objects
+        for persona in manager.state.personas.values():
+            if hasattr(persona, "interaction_mode"):
+                persona.interaction_mode = "manual"
+
     return {"success": True, "enabled": req.enabled}
 
 
@@ -492,7 +540,7 @@ def get_max_history_messages(manager=Depends(get_manager)):
 
     Returns the session override if set, otherwise the model default.
     """
-    from model_configs import get_default_max_history_messages
+    from saiverse.model_configs import get_default_max_history_messages
 
     override = getattr(manager, "max_history_messages_override", None)
     current_model = manager.model if manager.model != "None" else None
@@ -528,7 +576,7 @@ class MetabolismConfigRequest(BaseModel):
 @router.get("/metabolism")
 def get_metabolism_settings(manager=Depends(get_manager)):
     """Get current metabolism settings."""
-    from model_configs import get_metabolism_keep_messages, get_default_max_history_messages
+    from saiverse.model_configs import get_metabolism_keep_messages, get_default_max_history_messages
 
     current_model = manager.model if manager.model != "None" else None
     metab_override = getattr(manager, "metabolism_keep_messages_override", None)
@@ -557,7 +605,7 @@ def set_metabolism_settings(req: MetabolismConfigRequest, manager=Depends(get_ma
         if req.keep_messages < 1:
             raise HTTPException(status_code=400, detail="keep_messages must be >= 1")
         # Validate: high_wm - keep_messages >= 20
-        from model_configs import get_default_max_history_messages
+        from saiverse.model_configs import get_default_max_history_messages
         current_model = manager.model if manager.model != "None" else None
         high_wm_override = getattr(manager, "max_history_messages_override", None)
         high_wm = high_wm_override
@@ -578,3 +626,10 @@ def set_metabolism_settings(req: MetabolismConfigRequest, manager=Depends(get_ma
         "enabled": getattr(manager, "metabolism_enabled", True),
         "keep_messages": getattr(manager, "metabolism_keep_messages_override", None),
     }
+
+
+@router.get("/startup-warnings")
+def get_startup_warnings(manager=Depends(get_manager)):
+    """Return warnings collected during startup (e.g. failed persona loads)."""
+    warnings = getattr(manager, "startup_warnings", [])
+    return {"warnings": warnings}

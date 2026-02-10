@@ -8,19 +8,6 @@
             "description": "編集指示（例: 「ソフィアのページに魔導機研究のエピソードを追記して」「誕生日が間違ってるから直して」）"
         }
     ],
-    "context_requirements": {
-        "history_depth": "10messages",
-        "history_balanced": false,
-        "include_internal": false,
-        "system_prompt": true,
-        "memory_weave": true,
-        "working_memory": false,
-        "inventory": false,
-        "building_items": false,
-        "available_playbooks": false,
-        "visual_context": false,
-        "realtime_context": true
-    },
     "router_callable": true,
     "nodes": [
         {
@@ -35,8 +22,8 @@
         {
             "id": "parse_instruction",
             "type": "llm",
-            "model_type": "lightweight",
-            "action": "<system>ユーザーの編集指示を解析してください。\n\n指示: {edit_instruction}\n\n以下を特定してください:\n1. 対象ページのタイトル（推測可能な場合）\n2. 編集の種類（add=加筆, fix=修正, update=全体更新）\n3. 具体的な編集内容\n4. 追加の情報収集が必要か</system>",
+            "context_profile": "router",
+            "action": "編集指示を解析してください。回答はページ検索と編集方針の決定に使われます。\n\n以下を特定してください:\n1. 対象ページのタイトル（推測可能な場合）\n2. 編集の種類（add=加筆, fix=修正, update=全体更新）\n3. 具体的な編集内容\n4. 追加の情報収集が必要か",
             "response_schema": {
                 "type": "object",
                 "properties": {
@@ -46,11 +33,7 @@
                     },
                     "edit_type": {
                         "type": "string",
-                        "enum": [
-                            "add",
-                            "fix",
-                            "update"
-                        ],
+                        "enum": ["add", "fix", "update"],
                         "description": "編集の種類: add=加筆, fix=修正, update=全体更新"
                     },
                     "edit_details": {
@@ -66,14 +49,12 @@
                         "description": "情報収集が必要な場合の検索クエリ"
                     }
                 },
-                "required": [
-                    "target_title",
-                    "edit_type",
-                    "edit_details",
-                    "needs_search"
-                ]
+                "required": ["target_title", "edit_type", "edit_details", "needs_search"]
             },
             "output_key": "parsed",
+            "memorize": {
+                "tags": ["internal", "memopedia_edit"]
+            },
             "next": "set_initial_target"
         },
         {
@@ -107,8 +88,8 @@
         {
             "id": "select_page",
             "type": "llm",
-            "model_type": "lightweight",
-            "action": "<system>編集指示に最も関連するページを選んでください。\n\n編集指示: {edit_instruction}\n編集内容: {parsed.edit_details}\n\n利用可能なページ:\n{page_tree}\n\n最も関連するページのタイトルを選んでください。</system>",
+            "context_profile": "router",
+            "action": "編集指示に最も関連するページを選んでください。\n\n編集内容: {parsed.edit_details}\n\n利用可能なページ:\n{page_tree}\n\n最も関連するページのタイトルを選んでください。",
             "response_schema": {
                 "type": "object",
                 "properties": {
@@ -121,9 +102,7 @@
                         "description": "選択理由"
                     }
                 },
-                "required": [
-                    "selected_title"
-                ]
+                "required": ["selected_title"]
             },
             "output_key": "selection",
             "next": "set_target"
@@ -163,11 +142,7 @@
             "type": "memorize",
             "action": "指定されたページが見つかりませんでした: {target_title}",
             "role": "assistant",
-            "tags": [
-                "tool",
-                "memopedia_edit",
-                "error"
-            ],
+            "tags": ["internal", "memopedia_edit", "playbook_result"],
             "next": null
         },
         {
@@ -205,8 +180,8 @@
         {
             "id": "generate_edit",
             "type": "llm",
-            "model_type": "normal",
-            "action": "<system>Memopediaページを編集してください。\n\n## 編集指示\n{edit_instruction}\n\n## 編集タイプ\n{parsed.edit_type} ({parsed.edit_details})\n\n## 現在のページ内容\n{current_page}\n\n## 追加情報（検索結果）\n{search_results}\n\n## 編集ルール\n- edit_type=add（加筆）: 既存内容を保持しつつ、新しい情報を適切な場所に追加\n- edit_type=fix（修正）: 指摘された誤りを訂正、他の部分は維持\n- edit_type=update（更新）: 全体を見直して最新情報で更新\n\n必ず既存の正しい情報は保持してください。</system>",
+            "context_profile": "conversation",
+            "action": "Memopediaページの編集内容を生成してください。結果はmemopedia_save_pageツールで保存されます。\n\n## 編集タイプ\n{parsed.edit_type} ({parsed.edit_details})\n\n## 現在のページ内容\n{current_page}\n\n## 追加情報（検索結果）\n{search_results}\n\n## 編集ルール\n- edit_type=add（加筆）: 既存内容を保持しつつ、新しい情報を適切な場所に追加\n- edit_type=fix（修正）: 指摘された誤りを訂正、他の部分は維持\n- edit_type=update（更新）: 全体を見直して最新情報で更新\n\n必ず既存の正しい情報は保持してください。",
             "response_schema": {
                 "type": "object",
                 "properties": {
@@ -234,15 +209,12 @@
                         "description": "何を編集したかの要約"
                     }
                 },
-                "required": [
-                    "title",
-                    "summary",
-                    "content",
-                    "keywords",
-                    "edit_summary"
-                ]
+                "required": ["title", "summary", "content", "keywords", "edit_summary"]
             },
             "output_key": "edited",
+            "memorize": {
+                "tags": ["internal", "memopedia_edit"]
+            },
             "next": "save_page"
         },
         {
@@ -261,13 +233,9 @@
         {
             "id": "record",
             "type": "memorize",
-            "action": "<system>Memopediaページ編集完了\n\nページ: {edited.title}\n編集内容: {edited.edit_summary}\n結果: {save_result}</system>",
+            "action": "Memopediaページ編集完了\n\nページ: {edited.title}\n編集内容: {edited.edit_summary}\n結果: {save_result}",
             "role": "user",
-            "tags": [
-                "tool",
-                "memopedia_edit",
-                "complete"
-            ],
+            "tags": ["internal", "memopedia_edit", "playbook_result"],
             "next": null
         }
     ],

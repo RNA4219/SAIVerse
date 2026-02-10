@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import styles from './PersonaMenu.module.css';
 import { Home, Brain, Calendar, CheckSquare, Settings, X, RefreshCw, Network, Package, Sparkles } from 'lucide-react';
 import ModalOverlay from './common/ModalOverlay';
@@ -19,6 +19,16 @@ interface PersonaMenuProps {
 export default function PersonaMenu({ isOpen, onClose, personaId, personaName, avatarUrl, onOpenMemory, onOpenSchedule, onOpenTasks, onOpenSettings, onOpenInventory }: PersonaMenuProps) {
     const [loading, setLoading] = useState(false);
     const [organizing, setOrganizing] = useState(false);
+    const [developerMode, setDeveloperMode] = useState(false);
+
+    useEffect(() => {
+        if (isOpen) {
+            fetch('/api/config/developer-mode')
+                .then(res => res.ok ? res.json() : null)
+                .then(data => { if (data) setDeveloperMode(data.enabled); })
+                .catch(() => {});
+        }
+    }, [isOpen]);
 
     if (!isOpen) return null;
 
@@ -139,21 +149,23 @@ export default function PersonaMenu({ isOpen, onClose, personaId, personaName, a
                         </div>
                     </button>
 
-                    <button
-                        className={`${styles.actionBtn} ${!onOpenTasks ? styles.disabled : ''}`}
-                        onClick={() => {
-                            if (onOpenTasks) {
-                                onOpenTasks();
-                                onClose();
-                            }
-                        }}
-                    >
-                        <Network size={20} />
-                        <div className={styles.label}>
-                            <span>Tasks</span>
-                            <span className={styles.subtext}>タスク管理</span>
-                        </div>
-                    </button>
+                    {developerMode && (
+                        <button
+                            className={`${styles.actionBtn} ${!onOpenTasks ? styles.disabled : ''}`}
+                            onClick={() => {
+                                if (onOpenTasks) {
+                                    onOpenTasks();
+                                    onClose();
+                                }
+                            }}
+                        >
+                            <Network size={20} />
+                            <div className={styles.label}>
+                                <span>Tasks</span>
+                                <span className={styles.subtext}>タスク管理</span>
+                            </div>
+                        </button>
+                    )}
 
                     <button className={styles.actionBtn} onClick={handleOrganizeMemory} disabled={organizing}>
                         {organizing ? <RefreshCw className={styles.spin} size={20} /> : <Sparkles size={20} />}

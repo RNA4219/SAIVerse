@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useRef } from 'react';
 import styles from './Sidebar.module.css';
-import { Settings, Zap, BarChart2, UserPlus, Plus, X, HelpCircle } from 'lucide-react';
+import { Settings, Zap, BarChart2, UserPlus, Plus, X, HelpCircle, Navigation } from 'lucide-react';
 import GlobalSettingsModal from './GlobalSettingsModal';
 import UserProfileModal from './UserProfileModal';
 import PersonaWizard from './PersonaWizard';
@@ -40,6 +40,7 @@ export default function Sidebar({ onMove, isOpen, onOpen, onClose }: SidebarProp
     const [newBuildingName, setNewBuildingName] = useState('');
     const [isCreatingBuilding, setIsCreatingBuilding] = useState(false);
     const [isTutorialSelectOpen, setIsTutorialSelectOpen] = useState(false);
+    const [developerMode, setDeveloperMode] = useState(false);
 
     // Swipe Logic for Control
     const startX = useRef<number | null>(null);
@@ -48,15 +49,20 @@ export default function Sidebar({ onMove, isOpen, onOpen, onClose }: SidebarProp
 
     const refreshData = async () => {
         try {
-            const [statusRes, buildingsRes] = await Promise.all([
+            const [statusRes, buildingsRes, devModeRes] = await Promise.all([
                 fetch('/api/user/status'),
-                fetch('/api/user/buildings')
+                fetch('/api/user/buildings'),
+                fetch('/api/config/developer-mode')
             ]);
             if (statusRes.ok) setStatus(await statusRes.json());
             if (buildingsRes.ok) {
                 const data = await buildingsRes.json();
                 setBuildings(data.buildings || []);
                 if (data.city_id != null) setCityId(data.city_id);
+            }
+            if (devModeRes.ok) {
+                const data = await devModeRes.json();
+                setDeveloperMode(data.enabled);
             }
         } catch (err) {
             console.error("Sidebar fetch error", err);
@@ -279,7 +285,7 @@ export default function Sidebar({ onMove, isOpen, onOpen, onClose }: SidebarProp
                             onClick={() => handleMove(b.id)}
                         >
                             <span>{b.name}</span>
-                            {status?.current_building_id === b.id && <span>📍</span>}
+                            {status?.current_building_id === b.id && <Navigation size={14} style={{ opacity: 0.8 }} />}
                         </div>
                     ))}
                 </div>
@@ -287,17 +293,19 @@ export default function Sidebar({ onMove, isOpen, onOpen, onClose }: SidebarProp
                 {/* System Section */}
                 <div className={styles.sectionTitle}>システム</div>
                 <div className={styles.buildingList} style={{ flex: 'none', marginBottom: '1rem' }}>
-                    <div
-                        className={styles.buildingItem}
-                        onClick={() => {
-                            window.location.href = '/phenomena';
-                            if (onClose) onClose();
-                        }}
-                    >
-                        <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                            <Zap size={16} /> フェノメノン
-                        </span>
-                    </div>
+                    {developerMode && (
+                        <div
+                            className={styles.buildingItem}
+                            onClick={() => {
+                                window.location.href = '/phenomena';
+                                if (onClose) onClose();
+                            }}
+                        >
+                            <span style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                <Zap size={16} /> フェノメノン
+                            </span>
+                        </div>
+                    )}
                     <div
                         className={styles.buildingItem}
                         onClick={() => {

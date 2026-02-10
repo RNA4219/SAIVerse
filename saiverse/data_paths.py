@@ -16,14 +16,8 @@ from typing import Iterator
 
 LOGGER = logging.getLogger(__name__)
 
-# Root directories
-PROJECT_ROOT = Path(__file__).resolve().parent
-
-# USER_DATA_DIR can be overridden via environment variable (for testing)
-_user_data_env = os.getenv("SAIVERSE_USER_DATA_DIR")
-USER_DATA_DIR = Path(_user_data_env) if _user_data_env else PROJECT_ROOT / "user_data"
-
-BUILTIN_DATA_DIR = PROJECT_ROOT / "builtin_data"
+# Root directories (parent.parent because this file is now in saiverse/)
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 
 def get_saiverse_home() -> Path:
@@ -34,11 +28,19 @@ def get_saiverse_home() -> Path:
         - cities/<city>/buildings/<building>/: Building logs
         - image/: Uploaded images
         - backups/: Backup files
+        - user_data/: User customization data (tools, playbooks, database, etc.)
     """
     env_home = os.getenv("SAIVERSE_HOME")
     if env_home:
         return Path(env_home)
     return Path.home() / ".saiverse"
+
+
+# USER_DATA_DIR can be overridden via environment variable (for testing)
+_user_data_env = os.getenv("SAIVERSE_USER_DATA_DIR")
+USER_DATA_DIR = Path(_user_data_env) if _user_data_env else get_saiverse_home() / "user_data"
+
+BUILTIN_DATA_DIR = PROJECT_ROOT / "builtin_data"
 
 # Subdirectory names
 TOOLS_DIR = "tools"
@@ -269,6 +271,111 @@ def ensure_user_data_dirs() -> None:
         (USER_DATA_DIR / subdir).mkdir(parents=True, exist_ok=True)
 
 
+def migrate_legacy_user_data() -> bool:
+    """Migrate legacy user_data/ (inside repository) to ~/.saiverse/user_data/.
+
+    Called at startup to transparently move user data to the new location.
+    If the new location already has some content (e.g. from a previous partial
+    run), items are merged: legacy items are moved unless they already exist
+    at the destination.
+
+    Returns:
+        True if migration was performed, False otherwise.
+    """
+    legacy_dir = PROJECT_ROOT / "user_data"
+
+    # Skip if legacy dir doesn't exist or is already the target
+    if not legacy_dir.exists() or legacy_dir.resolve() == USER_DATA_DIR.resolve():
+        return False
+
+    # Skip if legacy dir is empty
+    if not any(legacy_dir.iterdir()):
+        return False
+
+    import shutil
+
+    LOGGER.info("Migrating user_data from %s to %s ...", legacy_dir, USER_DATA_DIR)
+    USER_DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+    moved_count = 0
+
+    def _move_item(src: Path, dst: Path) -> bool:
+        """Move a file or directory, falling back to copy if move fails."""
+        try:
+            shutil.move(str(src), str(dst))
+            return True
+        except (PermissionError, OSError) as exc:
+            # On Windows, files locked by other processes can't be moved.
+            # Fall back to copy and leave the source in place.
+            LOGGER.debug("move failed (%s), trying copy: %s", exc, src.name)
+            try:
+                if src.is_dir():
+                    shutil.copytree(str(src), str(dst))
+                else:
+                    shutil.copy2(str(src), str(dst))
+                return True
+            except (PermissionError, OSError) as copy_exc:
+                LOGGER.warning("Could not copy %s: %s", src, copy_exc)
+                return False
+
+    def _merge_dir(src_dir: Path, dst_dir: Path, depth: int = 0) -> int:
+        """Recursively merge src_dir into dst_dir.
+
+        Legacy (source) files always win — destination files that were
+        auto-created by startup code are overwritten with the real data.
+        """
+        count = 0
+        prefix = "  " * (depth + 1)
+        for item in list(src_dir.iterdir()):
+            dest = dst_dir / item.name
+            if item.is_dir() and dest.is_dir():
+                # Both are directories — recurse into them
+                LOGGER.debug("%sMerging directory %s/", prefix, item.name)
+                count += _merge_dir(item, dest, depth + 1)
+            elif item.is_file() and dest.is_file():
+                # Both are files — legacy wins (overwrite auto-created stubs)
+                src_size = item.stat().st_size
+                dst_size = dest.stat().st_size
+                if src_size > dst_size:
+                    LOGGER.info(
+                        "%sOverwriting %s (legacy %d bytes > dest %d bytes)",
+                        prefix, item.name, src_size, dst_size,
+                    )
+                    dest.unlink()
+                    if _move_item(item, dest):
+                        count += 1
+                else:
+                    LOGGER.debug("%sSkipping %s (dest already has data)", prefix, item.name)
+            elif dest.exists():
+                LOGGER.debug("%sSkipping %s (already exists)", prefix, item.name)
+            else:
+                LOGGER.info("%sMoving %s -> %s", prefix, item.name, dest)
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                if _move_item(item, dest):
+                    count += 1
+        return count
+
+    moved_count = _merge_dir(legacy_dir, USER_DATA_DIR)
+
+    # If legacy dir is now empty (all items moved), rename it
+    remaining = list(legacy_dir.iterdir())
+    if not remaining:
+        migrated_marker = legacy_dir.parent / "user_data.migrated"
+        try:
+            legacy_dir.rename(migrated_marker)
+            LOGGER.info("Legacy user_data renamed to %s", migrated_marker)
+        except OSError:
+            LOGGER.warning("Could not rename legacy user_data directory. Please remove it manually.")
+    else:
+        LOGGER.warning(
+            "Legacy user_data still contains %d items that could not be moved: %s",
+            len(remaining), ", ".join(r.name for r in remaining),
+        )
+
+    LOGGER.info("user_data migration complete. Moved %d items.", moved_count)
+    return moved_count > 0
+
+
 __all__ = [
     "PROJECT_ROOT",
     "USER_DATA_DIR",
@@ -293,4 +400,5 @@ __all__ = [
     "get_user_icons_dir",
     "get_user_database_dir",
     "ensure_user_data_dirs",
+    "migrate_legacy_user_data",
 ]

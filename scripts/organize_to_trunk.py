@@ -36,13 +36,13 @@ os.environ["SAIVERSE_SKIP_TOOL_IMPORTS"] = "1"
 
 from saiverse_memory import SAIMemoryAdapter
 from sai_memory.memopedia import Memopedia
-from model_configs import find_model_config
+from saiverse.model_configs import find_model_config
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 LOGGER = logging.getLogger(__name__)
 
 # Environment variable for default model
-ENV_MODEL = os.getenv("MEMORY_WEAVE_MODEL", "gemini-2.0-flash")
+ENV_MODEL = os.getenv("MEMORY_WEAVE_MODEL", "gemini-2.5-flash-lite-preview-09-2025")
 
 
 def get_llm_response(client, prompt: str, response_schema: dict) -> dict:

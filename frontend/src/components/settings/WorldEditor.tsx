@@ -98,6 +98,23 @@ interface ModelChoice {
     name: string;
 }
 
+/** Wrapper around fetch that checks res.ok and shows alert on error. Returns true on success. */
+async function apiCall(url: string, options?: RequestInit): Promise<boolean> {
+    try {
+        const res = await fetch(url, options);
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({ detail: res.statusText }));
+            alert(`エラー: ${err.detail || '不明なエラー'}`);
+            return false;
+        }
+        return true;
+    } catch (e) {
+        console.error('API call failed:', url, e);
+        alert('エラー: ネットワークエラー');
+        return false;
+    }
+}
+
 export default function WorldEditor() {
     const [subTab, setSubTab] = useState('city');
     const [isLoading, setIsLoading] = useState(false);
@@ -151,9 +168,9 @@ export default function WorldEditor() {
         setSelectedCity(city);
         setFormData({ name: city.CITYNAME, description: city.DESCRIPTION, ui_port: city.UI_PORT, api_port: city.API_PORT, timezone: city.TIMEZONE, online_mode: city.START_IN_ONLINE_MODE });
     };
-    const handleCreateCity = async () => { try { await fetch('/api/world/cities', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(formData) }); loadCities(); setFormData({}); } catch (e) { console.error('handleCreateCity failed:', e); } };
-    const handleUpdateCity = async () => { try { await fetch(`/api/world/cities/${selectedCity!.CITYID}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(formData) }); loadCities(); } catch (e) { console.error('handleUpdateCity failed:', e); } };
-    const handleDeleteCity = async () => { if (confirm("この City を削除しますか？")) { await fetch(`/api/world/cities/${selectedCity!.CITYID}`, { method: 'DELETE' }); setSelectedCity(null); setFormData({}); loadCities(); } };
+    const handleCreateCity = async () => { if (await apiCall('/api/world/cities', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(formData) })) { loadCities(); setFormData({}); } };
+    const handleUpdateCity = async () => { if (await apiCall(`/api/world/cities/${selectedCity!.CITYID}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(formData) })) { loadCities(); } };
+    const handleDeleteCity = async () => { if (confirm("この City を削除しますか？") && await apiCall(`/api/world/cities/${selectedCity!.CITYID}`, { method: 'DELETE' })) { setSelectedCity(null); setFormData({}); loadCities(); } };
 
     // --- Building Handlers ---
     const handleBuildingSelect = (b: Building) => {
@@ -169,9 +186,9 @@ export default function WorldEditor() {
             setFormData({ name: b.BUILDINGNAME, description: b.DESCRIPTION, capacity: b.CAPACITY, system_instruction: b.SYSTEM_INSTRUCTION, city_id: b.CITYID, auto_interval: b.AUTO_INTERVAL_SEC, tool_ids: ids, image_path: b.IMAGE_PATH || '', extra_prompt_files: extraPrompts });
         });
     };
-    const handleCreateBuilding = async () => { try { await fetch('/api/world/buildings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: formData.name, description: formData.description || "", capacity: formData.capacity || 1, system_instruction: formData.system_instruction || "", city_id: formData.city_id, building_id: formData.building_id || null }) }); loadBuildings(); setFormData({}); } catch (e) { console.error('handleCreateBuilding failed:', e); } };
-    const handleUpdateBuilding = async () => { try { await fetch(`/api/world/buildings/${selectedBuilding!.BUILDINGID}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...formData, tool_ids: formData.tool_ids || [] }) }); loadBuildings(); } catch (e) { console.error('handleUpdateBuilding failed:', e); } };
-    const handleDeleteBuilding = async () => { if (confirm("この Building を削除しますか？")) { await fetch(`/api/world/buildings/${selectedBuilding!.BUILDINGID}`, { method: 'DELETE' }); setSelectedBuilding(null); setFormData({}); loadBuildings(); } };
+    const handleCreateBuilding = async () => { if (await apiCall('/api/world/buildings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: formData.name, description: formData.description || "", capacity: formData.capacity || 1, system_instruction: formData.system_instruction || "", city_id: formData.city_id, building_id: formData.building_id || null }) })) { loadBuildings(); setFormData({}); } };
+    const handleUpdateBuilding = async () => { if (await apiCall(`/api/world/buildings/${selectedBuilding!.BUILDINGID}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ...formData, tool_ids: formData.tool_ids || [] }) })) { loadBuildings(); } };
+    const handleDeleteBuilding = async () => { if (confirm("この Building を削除しますか？") && await apiCall(`/api/world/buildings/${selectedBuilding!.BUILDINGID}`, { method: 'DELETE' })) { setSelectedBuilding(null); setFormData({}); loadBuildings(); } };
 
     // --- AI Handlers ---
     const handleAISelect = (ai: AI) => {
@@ -183,14 +200,14 @@ export default function WorldEditor() {
             appearance_image_path: ai.APPEARANCE_IMAGE_PATH || ''
         });
     };
-    const handleCreateAI = async () => { try { await fetch('/api/world/ais', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: formData.name, system_prompt: formData.system_prompt, home_city_id: formData.home_city_id }) }); loadAIs(); setFormData({}); } catch (e) { console.error('handleCreateAI failed:', e); } };
-    const handleUpdateAI = async () => { try { await fetch(`/api/world/ais/${selectedAI!.AIID}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(formData) }); loadAIs(); } catch (e) { console.error('handleUpdateAI failed:', e); } };
-    const handleDeleteAI = async () => { if (confirm("このペルソナを削除しますか？")) { await fetch(`/api/world/ais/${selectedAI!.AIID}`, { method: 'DELETE' }); setSelectedAI(null); setFormData({}); loadAIs(); } };
+    const handleCreateAI = async () => { if (await apiCall('/api/world/ais', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: formData.name, system_prompt: formData.system_prompt, home_city_id: formData.home_city_id }) })) { loadAIs(); setFormData({}); } };
+    const handleUpdateAI = async () => { if (await apiCall(`/api/world/ais/${selectedAI!.AIID}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(formData) })) { loadAIs(); } };
+    const handleDeleteAI = async () => { if (confirm("このペルソナを削除しますか？") && await apiCall(`/api/world/ais/${selectedAI!.AIID}`, { method: 'DELETE' })) { setSelectedAI(null); setFormData({}); loadAIs(); } };
     const handleMoveAI = async () => {
         if (!selectedAI || !formData.target_building_name) return;
-        await fetch(`/api/world/ais/${selectedAI.AIID}/move`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ target_building_name: formData.target_building_name }) });
-        alert("移動リクエストを送信しました");
-        // Ideally refresh location display
+        if (await apiCall(`/api/world/ais/${selectedAI.AIID}/move`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ target_building_name: formData.target_building_name }) })) {
+            alert("移動リクエストを送信しました");
+        }
     };
 
     // --- Blueprint Handlers ---
@@ -198,23 +215,22 @@ export default function WorldEditor() {
         setSelectedBlueprint(bp);
         setFormData({ name: bp.NAME, description: bp.DESCRIPTION, city_id: bp.CITYID, entity_type: bp.ENTITY_TYPE, system_prompt: bp.BASE_SYSTEM_PROMPT });
     };
-    const handleCreateBlueprint = async () => { await fetch('/api/world/blueprints', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(formData) }); loadBlueprints(); setFormData({}); };
-    const handleUpdateBlueprint = async () => { await fetch(`/api/world/blueprints/${selectedBlueprint!.BLUEPRINT_ID}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(formData) }); loadBlueprints(); };
-    const handleDeleteBlueprint = async () => { if (confirm("この Blueprint を削除しますか？")) { await fetch(`/api/world/blueprints/${selectedBlueprint!.BLUEPRINT_ID}`, { method: 'DELETE' }); setSelectedBlueprint(null); setFormData({}); loadBlueprints(); } };
+    const handleCreateBlueprint = async () => { if (await apiCall('/api/world/blueprints', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(formData) })) { loadBlueprints(); setFormData({}); } };
+    const handleUpdateBlueprint = async () => { if (await apiCall(`/api/world/blueprints/${selectedBlueprint!.BLUEPRINT_ID}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(formData) })) { loadBlueprints(); } };
+    const handleDeleteBlueprint = async () => { if (confirm("この Blueprint を削除しますか？") && await apiCall(`/api/world/blueprints/${selectedBlueprint!.BLUEPRINT_ID}`, { method: 'DELETE' })) { setSelectedBlueprint(null); setFormData({}); loadBlueprints(); } };
     const handleSpawnBlueprint = async () => {
         if (!selectedBlueprint || !formData.spawn_entity_name || !formData.spawn_building_name) return;
-        const res = await fetch(`/api/world/blueprints/${selectedBlueprint.BLUEPRINT_ID}/spawn`, {
+        if (await apiCall(`/api/world/blueprints/${selectedBlueprint.BLUEPRINT_ID}/spawn`, {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ entity_name: formData.spawn_entity_name, building_name: formData.spawn_building_name })
-        });
-        if (res.ok) alert("生成しました！"); else alert("生成に失敗しました");
+        })) { alert("生成しました！"); }
     };
 
     // --- Tool Handlers ---
     const handleToolSelect = (t: Tool) => { setSelectedTool(t); setFormData({ name: t.TOOLNAME, description: t.DESCRIPTION, module_path: t.MODULE_PATH, function_name: t.FUNCTION_NAME }); };
-    const handleCreateTool = async () => { await fetch('/api/world/tools', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(formData) }); loadTools(); setFormData({}); };
-    const handleUpdateTool = async () => { await fetch(`/api/world/tools/${selectedTool!.TOOLID}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(formData) }); loadTools(); };
-    const handleDeleteTool = async () => { if (confirm("このツールを削除しますか？")) { await fetch(`/api/world/tools/${selectedTool!.TOOLID}`, { method: 'DELETE' }); setSelectedTool(null); setFormData({}); loadTools(); } };
+    const handleCreateTool = async () => { if (await apiCall('/api/world/tools', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(formData) })) { loadTools(); setFormData({}); } };
+    const handleUpdateTool = async () => { if (await apiCall(`/api/world/tools/${selectedTool!.TOOLID}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(formData) })) { loadTools(); } };
+    const handleDeleteTool = async () => { if (confirm("このツールを削除しますか？") && await apiCall(`/api/world/tools/${selectedTool!.TOOLID}`, { method: 'DELETE' })) { setSelectedTool(null); setFormData({}); loadTools(); } };
 
     // --- Item Handlers ---
     const handleItemSelect = async (i: Item) => {
@@ -242,9 +258,9 @@ export default function WorldEditor() {
             setFormData({ name: i.NAME, item_type: i.TYPE, description: i.DESCRIPTION, owner_kind: 'world', owner_id: '', state_json: i.STATE_JSON, file_path: i.FILE_PATH });
         }
     };
-    const handleCreateItem = async () => { await fetch('/api/world/items', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(formData) }); loadItems(); setFormData({}); };
-    const handleUpdateItem = async () => { await fetch(`/api/world/items/${selectedItem!.ITEM_ID}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(formData) }); loadItems(); };
-    const handleDeleteItem = async () => { if (confirm("このアイテムを削除しますか？")) { await fetch(`/api/world/items/${selectedItem!.ITEM_ID}`, { method: 'DELETE' }); setSelectedItem(null); setFormData({}); loadItems(); } };
+    const handleCreateItem = async () => { if (await apiCall('/api/world/items', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(formData) })) { loadItems(); setFormData({}); } };
+    const handleUpdateItem = async () => { if (await apiCall(`/api/world/items/${selectedItem!.ITEM_ID}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(formData) })) { loadItems(); } };
+    const handleDeleteItem = async () => { if (confirm("このアイテムを削除しますか？") && await apiCall(`/api/world/items/${selectedItem!.ITEM_ID}`, { method: 'DELETE' })) { setSelectedItem(null); setFormData({}); loadItems(); } };
 
     // --- Playbook Handlers ---
     const handlePlaybookSelect = async (pb: Playbook) => {
@@ -267,20 +283,16 @@ export default function WorldEditor() {
         } catch (e) { console.error('handlePlaybookSelect failed:', e); }
     };
     const handleCreatePlaybook = async () => {
-        try {
-            const res = await fetch('/api/world/playbooks', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(formData) });
-            if (!res.ok) { const err = await res.json(); alert(err.detail || 'Error'); return; }
+        if (await apiCall('/api/world/playbooks', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(formData) })) {
             loadPlaybooks(); setFormData({}); setSelectedPlaybook(null);
-        } catch (e) { console.error('handleCreatePlaybook failed:', e); }
+        }
     };
     const handleUpdatePlaybook = async () => {
-        try {
-            const res = await fetch(`/api/world/playbooks/${selectedPlaybook!.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(formData) });
-            if (!res.ok) { const err = await res.json(); alert(err.detail || 'Error'); return; }
+        if (await apiCall(`/api/world/playbooks/${selectedPlaybook!.id}`, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(formData) })) {
             loadPlaybooks();
-        } catch (e) { console.error('handleUpdatePlaybook failed:', e); }
+        }
     };
-    const handleDeletePlaybook = async () => { if (confirm("この Playbook を削除しますか？")) { await fetch(`/api/world/playbooks/${selectedPlaybook!.id}`, { method: 'DELETE' }); setSelectedPlaybook(null); setFormData({}); loadPlaybooks(); } };
+    const handleDeletePlaybook = async () => { if (confirm("この Playbook を削除しますか？") && await apiCall(`/api/world/playbooks/${selectedPlaybook!.id}`, { method: 'DELETE' })) { setSelectedPlaybook(null); setFormData({}); loadPlaybooks(); } };
 
 
 

@@ -28,6 +28,7 @@ def compile_playbook(
     set_node_factory: Optional[Callable[[Any], Callable[[dict], Any]]] = None,
     stelis_start_node_factory: Optional[Callable[[Any], Callable[[dict], Any]]] = None,
     stelis_end_node_factory: Optional[Callable[[Any], Callable[[dict], Any]]] = None,
+    tool_call_node_factory: Optional[Callable[[Any], Callable[[dict], Any]]] = None,
 ) -> Optional[Callable[[dict], Any]]:
     """Compile a PlaybookSchema into a LangGraph runnable coroutine.
 
@@ -58,6 +59,11 @@ def compile_playbook(
                 graph.add_node(node_def.id, llm_node_factory(node_def))
             elif node_def.type == NodeType.TOOL:
                 graph.add_node(node_def.id, tool_node_factory(node_def))
+            elif node_def.type == NodeType.TOOL_CALL and tool_call_node_factory is not None:
+                graph.add_node(node_def.id, tool_call_node_factory(node_def))
+            elif node_def.type == NodeType.TOOL_CALL and tool_call_node_factory is None:
+                logger.error("[langgraph] Cannot add TOOL_CALL node '%s': tool_call_node_factory is None", node_def.id)
+                return None
             elif node_def.type == NodeType.SPEAK:
                 graph.add_node(node_def.id, speak_node)
             elif node_def.type == NodeType.SAY and say_node_factory is not None:
@@ -119,7 +125,7 @@ def compile_playbook(
                 def make_error_router(_node_id=node_def.id, _pb_name=playbook.name):
                     def router_fn(state: dict) -> str:
                         if state.get("_exec_error"):
-                            from logging_config import log_sea_trace
+                            from saiverse.logging_config import log_sea_trace
                             log_sea_trace(_pb_name, _node_id, "EXEC", "→ error_next (sub-playbook failed)")
                             return "_exec_error"
                         return "_exec_ok"
@@ -212,7 +218,7 @@ def compile_playbook(
                                     if matched:
                                         logger.debug("[langgraph] conditional_next: numeric match %s %s %s -> %s",
                                                     num_value, operator, case_num, case_key)
-                                        from logging_config import log_sea_trace
+                                        from saiverse.logging_config import log_sea_trace
                                         log_sea_trace(_pb_name, _node_id, "PASS", f"{cond_next.field}={num_value} {operator} {case_num} → {cond_next.cases.get(case_key, 'END')}")
                                         return case_key
                                 except (ValueError, TypeError):
@@ -221,7 +227,7 @@ def compile_playbook(
                             # No numeric match, try default
                             if "default" in cond_next.cases:
                                 logger.debug("[langgraph] conditional_next: no numeric match, using default")
-                                from logging_config import log_sea_trace
+                                from saiverse.logging_config import log_sea_trace
                                 log_sea_trace(_pb_name, _node_id, "PASS", f"{cond_next.field}={num_value} {operator} (no match) → {cond_next.cases.get('default', 'END')}")
                                 return "default"
                             logger.debug("[langgraph] conditional_next: no match, ending")
@@ -248,7 +254,7 @@ def compile_playbook(
 
                         target = cond_next.cases.get(result, "END")
                         logger.debug("[langgraph] conditional_next: selected path=%s -> target=%s", result, target)
-                        from logging_config import log_sea_trace
+                        from saiverse.logging_config import log_sea_trace
                         log_sea_trace(_pb_name, _node_id, "PASS", f"{cond_next.field}={value_str} {operator} → {target}")
                         return result
                     return router_fn

@@ -163,13 +163,13 @@ _install_gemini_stream_patch()
 
 from .gemini_utils import build_gemini_clients
 
-from media_utils import iter_image_media, load_image_bytes_for_llm
-from media_summary import ensure_image_summary
+from saiverse.media_utils import iter_image_media, load_image_bytes_for_llm
+from saiverse.media_summary import ensure_image_summary
 from tools import GEMINI_TOOLS_SPEC
-from llm_router import route
+from saiverse.llm_router import route
 
 from .base import EmptyResponseError, IncompleteStreamError, LLMClient, get_llm_logger
-from logging_config import log_timeout_event
+from saiverse.logging_config import log_timeout_event
 from .utils import content_to_text, is_truthy_flag, merge_reasoning_strings
 
 
@@ -275,9 +275,20 @@ class GeminiClient(LLMClient):
         if not self._include_thoughts and not self._thinking_level and self._thinking_budget is None:
             return None
 
+        # include_thoughts alone (without budget or level) causes silent failures
+        # on some models (e.g., Flash Lite ignores structured output).
+        # Only send thinking config when a control parameter is present.
+        if not self._thinking_level and self._thinking_budget is None:
+            logging.warning(
+                "[gemini] include_thoughts is True but no thinking_budget or thinking_level set "
+                "for model %s. Skipping thinking config to avoid API issues. "
+                "Add thinking_budget or thinking_level to the model config file.",
+                self.model,
+            )
+            return None
+
         kwargs: Dict[str, Any] = {}
-        if self._include_thoughts:
-            kwargs["include_thoughts"] = True
+        kwargs["include_thoughts"] = True
         if self._thinking_level:
             kwargs["thinking_level"] = self._thinking_level
         if self._thinking_budget is not None:
@@ -819,7 +830,7 @@ class GeminiClient(LLMClient):
                     self._store_reasoning(reasoning_entries)
 
                     if response_schema:
-                        logging.info("[gemini] Structured output: text=%r, len=%d", text[:200] if text else "(empty)", len(text))
+                        logging.info("[gemini] Structured output: text=%r, len=%d", text if text else "(empty)", len(text))
                         try:
                             parsed = json.loads(text)
                             if isinstance(parsed, dict):

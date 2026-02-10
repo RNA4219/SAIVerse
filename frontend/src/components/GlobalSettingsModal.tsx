@@ -60,6 +60,9 @@ export default function GlobalSettingsModal({ isOpen, onClose }: GlobalSettingsM
     // Global Auto Mode
     const [globalAutoEnabled, setGlobalAutoEnabled] = useState(true);
 
+    // Developer Mode
+    const [developerMode, setDeveloperMode] = useState(false);
+
     // Theme
     const [theme, setTheme] = useState<'system' | 'light' | 'dark'>('system');
 
@@ -74,6 +77,7 @@ export default function GlobalSettingsModal({ isOpen, onClose }: GlobalSettingsM
         if (isOpen && activeTab === 'env') {
             loadEnvVars();
             loadGlobalAutoState();
+            loadDeveloperModeState();
             // Load theme from localStorage
             const saved = localStorage.getItem('saiverse-theme') as 'system' | 'light' | 'dark' | null;
             setTheme(saved || 'system');
@@ -101,6 +105,38 @@ export default function GlobalSettingsModal({ isOpen, onClose }: GlobalSettingsM
             }
         } catch (e) {
             console.error("Failed to load global auto state", e);
+        }
+    };
+
+    const loadDeveloperModeState = async () => {
+        try {
+            const res = await fetch('/api/config/developer-mode');
+            if (res.ok) {
+                const data = await res.json();
+                setDeveloperMode(data.enabled);
+            }
+        } catch (e) {
+            console.error("Failed to load developer mode state", e);
+        }
+    };
+
+    const toggleDeveloperMode = async () => {
+        const newState = !developerMode;
+        try {
+            const res = await fetch('/api/config/developer-mode', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ enabled: newState })
+            });
+            if (res.ok) {
+                setDeveloperMode(newState);
+                // When turning OFF, backend also disables global auto
+                if (!newState) {
+                    setGlobalAutoEnabled(false);
+                }
+            }
+        } catch (e) {
+            console.error("Failed to toggle developer mode", e);
         }
     };
 
@@ -339,22 +375,24 @@ export default function GlobalSettingsModal({ isOpen, onClose }: GlobalSettingsM
                                     </div>
                                 </div>
 
-                                {/* Global Auto Mode Toggle */}
-                                <div className={styles.toggleContainer}>
-                                    <div>
-                                        <div className={styles.toggleLabel}>
-                                            {globalAutoEnabled ? <Play size={18} /> : <Pause size={18} />}
-                                            自律会話モード
+                                {/* Global Auto Mode Toggle - only visible in developer mode */}
+                                {developerMode && (
+                                    <div className={styles.toggleContainer}>
+                                        <div>
+                                            <div className={styles.toggleLabel}>
+                                                {globalAutoEnabled ? <Play size={18} /> : <Pause size={18} />}
+                                                自律会話モード
+                                            </div>
+                                            <div className={styles.toggleDescription}>
+                                                OFFにするとConversationManagerのポーリングを停止し、ログ出力を抑制します
+                                            </div>
                                         </div>
-                                        <div className={styles.toggleDescription}>
-                                            OFFにするとConversationManagerのポーリングを停止し、ログ出力を抑制します
-                                        </div>
+                                        <div
+                                            className={`${styles.toggle} ${globalAutoEnabled ? styles.active : ''}`}
+                                            onClick={toggleGlobalAuto}
+                                        />
                                     </div>
-                                    <div
-                                        className={`${styles.toggle} ${globalAutoEnabled ? styles.active : ''}`}
-                                        onClick={toggleGlobalAuto}
-                                    />
-                                </div>
+                                )}
 
                                 <div className={styles.sectionHeader}>
                                     <h3>サーバー環境変数 (.env)</h3>
@@ -392,6 +430,23 @@ export default function GlobalSettingsModal({ isOpen, onClose }: GlobalSettingsM
                                         </div>
                                     </>
                                 )}
+
+                                {/* Developer Mode Toggle */}
+                                <div className={styles.toggleContainer} style={{ marginTop: '1.5rem' }}>
+                                    <div>
+                                        <div className={styles.toggleLabel}>
+                                            <Cpu size={18} />
+                                            開発者モード
+                                        </div>
+                                        <div className={styles.toggleDescription}>
+                                            ONにすると開発中の機能が表示されます（不安定なため推奨しません）
+                                        </div>
+                                    </div>
+                                    <div
+                                        className={`${styles.toggle} ${developerMode ? styles.active : ''}`}
+                                        onClick={toggleDeveloperMode}
+                                    />
+                                </div>
                             </div>
                         )}
 
