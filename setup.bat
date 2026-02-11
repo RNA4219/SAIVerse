@@ -21,33 +21,49 @@ echo [OK] %PY_VERSION%
 REM --- 2. Node.js check & auto-install ---
 where node >nul 2>nul
 if %errorlevel% equ 0 goto :node_found
+REM Check for portable install from previous setup
+if exist ".node\node.exe" (
+    set "PATH=%CD%\.node;%PATH%"
+    goto :node_found
+)
 echo.
 echo [SETUP] Node.js not found. Attempting auto-install...
+REM Try winget first
 where winget >nul 2>nul
-if %errorlevel% neq 0 (
-    echo [ERROR] Could not auto-install Node.js. winget is not available.
-    echo   Please install manually from https://nodejs.org/
-    pause
-    exit /b 1
-)
+if %errorlevel% neq 0 goto :try_portable_node
 winget install OpenJS.NodeJS.LTS --accept-package-agreements --accept-source-agreements
-if %errorlevel% neq 0 (
-    echo [ERROR] Node.js auto-install failed.
-    echo   Please install manually from https://nodejs.org/
-    pause
-    exit /b 1
-)
+if %errorlevel% neq 0 goto :try_portable_node
 REM Add default install path to current session
 set "PATH=%PATH%;C:\Program Files\nodejs"
 where node >nul 2>nul
 if %errorlevel% neq 0 (
-    echo [OK] Node.js installed.
+    echo [OK] Node.js installed via winget.
     echo   Please close this window and run setup.bat again to refresh PATH.
     pause
     exit /b 0
 )
 for /f "tokens=*" %%v in ('node --version') do set NODE_VERSION=%%v
 echo [OK] Node.js %NODE_VERSION% installed
+goto :node_done
+
+:try_portable_node
+echo [SETUP] Installing Node.js portable edition...
+powershell -ExecutionPolicy Bypass -File scripts\install_node_portable.ps1
+if %errorlevel% neq 0 (
+    echo [ERROR] Could not install Node.js automatically.
+    echo   Please install manually from https://nodejs.org/
+    pause
+    exit /b 1
+)
+if not exist ".node\node.exe" (
+    echo [ERROR] Node.js portable installation failed.
+    echo   Please install manually from https://nodejs.org/
+    pause
+    exit /b 1
+)
+set "PATH=%CD%\.node;%PATH%"
+for /f "tokens=*" %%v in ('node --version') do set NODE_VERSION=%%v
+echo [OK] Node.js %NODE_VERSION% installed (portable)
 goto :node_done
 
 :node_found

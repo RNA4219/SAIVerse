@@ -107,6 +107,7 @@ if %errorlevel% neq 0 (
 )
 
 REM --- 7. Frontend update ---
+if exist ".node\node.exe" set "PATH=%CD%\.node;%PATH%"
 where node >nul 2>nul
 if %errorlevel% equ 0 (
     echo.
