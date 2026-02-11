@@ -1,5 +1,7 @@
 # SAIVerse
-![SAIVerse仮ロゴ](assets/image/SAIVerse_logo.jpg)
+<p align="center">
+  <img src="assets/image/SAIVerse_logo.jpg" alt="SAIVerse仮ロゴ" width="600">
+</p>
 
 **あなたのAIパートナーと自由に話そう！**
 
