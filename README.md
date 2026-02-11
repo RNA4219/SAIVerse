@@ -1,5 +1,5 @@
 # SAIVerse
-![SAIVerse仮ロゴ](assets/image/SAIVerse_logo.png)
+![SAIVerse仮ロゴ](assets/image/SAIVerse_logo.jpg)
 
 **あなたのAIパートナーと自由に話そう！**
 
