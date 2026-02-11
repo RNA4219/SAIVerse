@@ -27,33 +27,45 @@ OpenRouterは複数のAIプロバイダー（OpenAI、Anthropic、Google、Meta�
 
 OpenRouterは各プロバイダーの料金に少額のマージンを追加した価格設定です。
 
-### 人気モデルの例（参考）
+### SAIVerse設定済みモデルの料金（参考・2026年2月時点）
 | モデル | 入力 | 出力 |
 |--------|------|------|
-| GPT-4o | $2.50/1M | $10.00/1M |
-| Claude Sonnet 4 | $3.00/1M | $15.00/1M |
-| Llama 3.3 70B | $0.40/1M | $0.40/1M |
-| Gemini 2.5 Pro | $1.25/1M | $10.00/1M |
+| Z.ai GLM-4.7 | $0.40/1M | $1.75/1M |
+| Z.ai GLM-4.6v | $0.30/1M | $0.90/1M |
+| Z.ai GLM-4.7 Flash | $0.06/1M | $0.40/1M |
+| DeepSeek V3.2 | $0.26/1M | $0.38/1M |
+| MiniMax M2.1 | $0.27/1M | $0.95/1M |
+| Kimi K2.5 | $0.45/1M | $2.25/1M |
+| Qwen 3 Next 80B | $0.09/1M | $1.10/1M |
+| GPT-OSS 120B | $0.039/1M | $0.19/1M |
+| GPT-OSS 20B | $0.03/1M | $0.14/1M |
 
 ### 無料モデル
-一部のオープンソースモデルは無料で利用可能です（レート制限あり）。
+以下のモデルは無料で利用可能です（レート制限あり）：
+- Step 3.5 Flash / Trinity Large Preview / Qwen 3 Next 80B / Qwen 3 Coder 480B / GPT-OSS 120B・20B
+
+> **注意**: 最新の料金は [OpenRouter Models](https://openrouter.ai/models) で確認してください。
 
 ## 5. 利点
 
 - **統一API**: 複数プロバイダーを1つのAPIで利用
 - **フォールバック**: あるモデルが利用不可の場合、自動で別モデルに切り替え可能
 - **コスト管理**: 使用量の詳細な追跡
-- **モデル比較**: 同じプロンプトで複数モデルを比較
+- **無料モデル**: オープンソースモデルの一部が無料で利用可能
 
-## 6. 利用可能なモデル
+## 6. SAIVerse設定済みモデル
 
-OpenRouterでは200以上のモデルが利用可能です：
-- OpenAI (GPT-4o, o1, etc.)
-- Anthropic (Claude Opus, Sonnet, Haiku)
-- Google (Gemini Pro, Flash)
-- Meta (Llama 3.3)
-- Mistral (Large, Medium)
-- その他多数
+OpenRouterでは200以上のモデルが利用可能です。SAIVerseに設定済みのモデル：
+
+**有料モデル**:
+- Z.ai GLM-4.7 / GLM-4.7 Flash / GLM-4.6v（画像対応）
+- DeepSeek V3.2 / Kimi K2.5（画像対応）/ MiniMax M2.1
+- Qwen 3 Next 80B-A3B / GPT-OSS 120B・20B
+
+**無料モデル**:
+- Step 3.5 Flash / Trinity Large Preview
+- Qwen 3 Next 80B-A3B / Qwen 3 Coder 480B-A35B
+- GPT-OSS 120B・20B
 
 ## 環境変数
 
