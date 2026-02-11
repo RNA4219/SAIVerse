@@ -1,4 +1,5 @@
 @echo off
+cd /d "%~dp0"
 setlocal enabledelayedexpansion
 
 echo ========================================
@@ -12,10 +13,25 @@ if %errorlevel% neq 0 (
     echo [ERROR] Python not found.
     echo   Please install from https://www.python.org/downloads/
     echo   Make sure to check "Add Python to PATH" during installation.
+    echo.
+    echo   If you already installed Python, Windows App Execution Aliases
+    echo   may be intercepting the command. To fix:
+    echo     Settings ^> Apps ^> App Execution Aliases
+    echo     Turn off "python.exe" and "python3.exe"
     pause
     exit /b 1
 )
 for /f "tokens=*" %%v in ('python --version 2^>^&1') do set PY_VERSION=%%v
+if "%PY_VERSION%"=="Python" (
+    echo [WARN] Python found but version unknown.
+    echo   Windows App Execution Aliases may be intercepting the command.
+    echo   To fix:
+    echo     Settings ^> Apps ^> App Execution Aliases
+    echo     Turn off "python.exe" and "python3.exe"
+    echo   Then close this window and run setup.bat again.
+    pause
+    exit /b 1
+)
 echo [OK] %PY_VERSION%
 
 REM --- 2. Node.js check & auto-install ---
