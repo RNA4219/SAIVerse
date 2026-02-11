@@ -19,33 +19,31 @@ Nvidia NIM (NVIDIA Inference Microservices) は、NVIDIAが提供するAI推論�
 
 ## 3. 料金について
 
-### 無料枠
-- 新規登録時に1000クレジット付与
-- 約1000回のAPI呼び出しが可能
+**NIMのLLM APIは現在完全無料です。** 課金の仕組みはまだ導入されていません（2026年2月時点）。
 
-### 有料プラン
-従量課金制。モデルにより料金が異なります。
-
-### 主なモデルの料金（参考）
-| モデル | 入力 | 出力 |
-|--------|------|------|
-| Mistral Large 3 | $2.00/1M tokens | $6.00/1M tokens |
-| Llama 3.3 70B | $0.35/1M tokens | $0.40/1M tokens |
-| Qwen 3 Coder | $0.15/1M tokens | $0.60/1M tokens |
+APIキーを取得すれば、全モデルを無料で利用できます。
 
 ## 4. 利用可能なモデル
 
+SAIVerseに設定済みのNIMモデル：
+
 - **Mistral Large 3**: 高性能オープンウェイトモデル
-- **Llama 3.3 70B**: Metaの最新モデル
-- **Qwen 3 Coder**: コーディング特化モデル
-- **DeepSeek R1**: 推論特化モデル
-- その他多数のオープンソースモデル
+- **DeepSeek V3.2**: 高性能・低コストモデル
+- **Qwen 3 235B-A22B**: Alibaba Cloudの大規模MoEモデル
+- **Qwen 3 Next 80B-A3B**: Qwen 3の軽量版（instruct / thinking）
+- **Qwen 3 Coder 480B-A35B**: コーディング特化モデル
+- **Kimi K2.5**: Moonshotの高性能モデル（画像対応）
+- **MiniMax M2.1**: MiniMaxの大規模モデル
+- **Z.ai GLM-4.7**: 智谱AIのフラッグシップモデル
+- **Step 3.5 Flash**: StepFunの高速モデル
+- **GPT-OSS 120B**: OpenAIのオープンウェイトモデル
 
 ## 5. 特徴
 
 - **高速推論**: NVIDIAのGPUインフラによる高速処理
 - **低レイテンシ**: エンタープライズ向けの安定した応答時間
 - **スケーラビリティ**: 大規模なリクエストにも対応
+- **OpenAI互換API**: 既存のOpenAI SDKでそのまま利用可能
 
 ## 6. APIエンドポイント
 
