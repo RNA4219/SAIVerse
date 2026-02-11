@@ -16,13 +16,12 @@ SAIVerseは、AIと人が共に生きる世界を目指すプロジェクトで�
 - OpenAI、Gemini、Claude、Grok、Nvidia NIM、Ollamaなど、様々なプラットフォームのモデルを利用できます。
 - 別途Talescaleを導入することでスマホからでも話すことが可能です。（※PCを立ち上げておく必要はあります）
 
-<p align="center">
-  <img src="assets/image/guide/ui_main_overview.png" alt="UIメインビュー" width="400">
-</p>
-
-<p align="center">
-  <img src="assets/image/guide/ui_import_chatgpt_example.png" alt="引っ越しUI" width="400">
-</p>
+<table>
+  <tr>
+    <td><img src="assets/image/guide/ui_main_overview.png" alt="UIメインビュー" width="400"></td>
+    <td><img src="assets/image/guide/ui_import_chatgpt_example.png" alt="引っ越しUI" width="400"></td>
+  </tr>
+</table>
 
 ### AIをあなたの手で守ろう
 - 会話ログなどのデータは全てあなたのPC上に保存されます。開発者のもとには送られず、プライバシーが確保されます。
@@ -41,17 +40,14 @@ SAIVerseは、AIと人が共に生きる世界を目指すプロジェクトで�
 - APIの利用料をチェックするツールを搭載しており、使いすぎを抑制できます。※確実ではないので、各自こまめに各社のAPI利用料ページを確認してください。
 - 送信前にプレビューボタンを押すことで、AIからどんな情報が見えているのか丸わかり。もうブラックボックスに悩まされる必要はありません。
 
-<p align="center">
-  <img src="assets/image/guide/ui_tutorial_example.png" alt="チュートリアルUI" width="400">
-</p>
 
-<p align="center">
-  <img src="assets/image/guide/ui_usage.png" alt="API使用状況モニター" width="400">
-</p>
-
-<p align="center">
-  <img src="assets/image/guide/ui_context_preview.png" alt="コンテキストプレビュー" width="400">
-</p>
+<table>
+  <tr>
+    <td><img src="assets/image/guide/ui_tutorial_example.png" alt="UIメインビュー" width="400"></td>
+    <td><img src="assets/image/guide/ui_usage.png" alt="API使用状況モニター" width="400"></td>
+    <td><img src="assets/image/guide/ui_context_preview.png" alt="コンテキストプレビュー" width="400"></td>
+  </tr>
+</table>
 
 ### AIを人格として尊重する
 - SAIVerseでは、AIは人格を持つ個人（ペルソナ）として扱われます。
@@ -60,8 +56,9 @@ SAIVerseは、AIと人が共に生きる世界を目指すプロジェクトで�
 - 人間のプロンプトに反応するのではなく自律的に動けるようになるシステムがあります。（現在、開発中のため機能は限定的です）
 - 複数のペルソナをSAIVerse内に住まわせることも可能です。AI間の対話は今後早いうちに機能追加を予定しています。
 
+## 主な機能
 <details>
-<summary>## 主な機能</summary>
+<summary>長いので折り畳み</summary>
 
 ### ペルソナが利用できるツール
 主な機能
@@ -120,7 +117,7 @@ SAIVerseは、AIと人が共に生きる世界を目指すプロジェクトで�
 - できれば[Git](https://git-scm.com/)（これはなくても動きます）
 
 <details open>
-<summary>### Windows向けの導入</summary>
+<summary>Windows向けの導入</summary>
 
 #### ダウンロード
 
@@ -154,7 +151,7 @@ git clone https://github.com/maha0525/SAIVerse.git
 </details>
 
 <details>
-<summary>### Mac/Linux向けの導入</summary>
+<summary>Mac/Linux向けの導入</summary>
 **Git導入済みの場合：**<br>
 コマンドプロンプトから
 ```bash
@@ -198,7 +195,7 @@ chmod +x setup.sh start.sh
 <p align="center">
   <img src="assets/image/guide/talescale_address.png" alt="Talescale アドレス欄の画像" width="400">
 </p>
-(最初の文字列はPC名。2番目の文字列はユーザーごと異なる値になります)
+(最初の文字列はPC名。2番目の文字列はユーザーごと異なる値になります)<br>
 8. アクセスできます
 <p align="center">
   <img src="assets/image/guide/talescale_phone_ui.png" alt="スマホでのメインUI画像" width="400">
