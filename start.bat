@@ -13,6 +13,9 @@ if not exist ".venv\Scripts\activate.bat" (
     exit /b 1
 )
 
+REM Add portable Node.js to PATH if exists
+if exist ".node\node.exe" set "PATH=%CD%\.node;%PATH%"
+
 REM Start Backend
 echo [INFO] Starting backend...
 start "SAIVerse Backend" /min cmd /c "call .venv\Scripts\activate.bat && python main.py city_a"
