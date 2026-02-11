@@ -19,7 +19,7 @@ if exist ".node\node.exe" set "PATH=%CD%\.node;%PATH%"
 
 REM Start Backend
 echo [INFO] Starting backend...
-start "SAIVerse Backend" /min cmd /c "call .venv\Scripts\activate.bat && python main.py city_a"
+start "SAIVerse Backend" cmd /c "title SAIVerse Backend && call .venv\Scripts\activate.bat && python main.py city_a"
 
 REM Wait for backend to initialize
 echo [INFO] Waiting for backend to initialize...
@@ -27,7 +27,7 @@ timeout /t 5 /nobreak >nul
 
 REM Start Frontend
 echo [INFO] Starting frontend...
-start "SAIVerse Frontend" /min cmd /c "cd frontend && npm run dev"
+start "SAIVerse Frontend" cmd /c "title SAIVerse Frontend && cd frontend && npm run dev"
 
 REM Wait for frontend to initialize
 timeout /t 5 /nobreak >nul
@@ -43,8 +43,13 @@ echo ========================================
 echo.
 echo   Web UI: http://localhost:3000
 echo.
+echo   Two additional windows should be open:
+echo     [SAIVerse Backend]  - Python server
+echo     [SAIVerse Frontend] - Next.js dev server
+echo   Do NOT close them while SAIVerse is running.
+echo.
 echo   To stop: close all the command prompt windows.
 echo.
-echo   You can close this window.
+echo   You can close THIS window.
 echo.
 pause
