@@ -206,7 +206,7 @@ export default function TutorialWizard({
             }
         } catch (e) {
             console.error('Error in step transition', e);
-            setError('処理中にエラーが発生しました');
+            setError(e instanceof Error ? e.message : '処理中にエラーが発生しました');
         } finally {
             setIsLoading(false);
         }
@@ -225,59 +225,81 @@ export default function TutorialWizard({
     };
 
     const handleComplete = async () => {
+        setError(null);
         try {
-            await fetch('/api/tutorial/complete', {
+            const completeRes = await fetch('/api/tutorial/complete', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ version: 1 })
             });
+            if (!completeRes.ok) {
+                console.error('Failed to mark tutorial complete:', completeRes.status);
+            }
 
             // Move to the created persona's room if available
             if (state.createdRoomId) {
-                await fetch('/api/user/move', {
+                const moveRes = await fetch('/api/user/move', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ target_building_id: state.createdRoomId })
                 });
+                if (!moveRes.ok) {
+                    console.error('Failed to move to room:', moveRes.status);
+                }
             }
 
             onComplete?.(state.createdRoomId ?? undefined);
             onClose();
         } catch (e) {
             console.error('Failed to complete tutorial', e);
+            setError(e instanceof Error ? e.message : 'チュートリアルの完了処理に失敗しました');
         }
     };
 
     // API call functions
     const saveUserName = async () => {
         const name = state.userName.trim() || 'ユーザー';
-        await fetch('/api/user/me', {
+        const res = await fetch('/api/user/me', {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ display_name: name })
         });
+        if (!res.ok) {
+            const detail = await res.json().catch(() => ({}));
+            throw new Error(detail.detail || 'ユーザー名の保存に失敗しました');
+        }
     };
 
     const saveCityName = async () => {
         const name = state.cityName.trim();
         if (!name) return; // Skip if empty, will use default
 
-        // Check if city exists and update, or create new
-        try {
-            const res = await fetch('/api/db/tables/city');
-            if (res.ok) {
-                const cities = await res.json();
-                if (cities.length > 0) {
-                    // Update first city
-                    await fetch(`/api/world/cities/${cities[0].CITYID}`, {
-                        method: 'PUT',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ name })
-                    });
-                }
-            }
-        } catch (e) {
-            console.error('Failed to save city name', e);
+        const res = await fetch('/api/db/tables/city');
+        if (!res.ok) {
+            throw new Error('City情報の取得に失敗しました');
+        }
+        const cities = await res.json();
+        if (cities.length === 0) {
+            throw new Error('Cityが見つかりません');
+        }
+
+        const city = cities[0];
+        // PUT requires all fields, so send current values with updated name
+        const updateRes = await fetch(`/api/world/cities/${city.CITYID}`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                name,
+                description: city.DESCRIPTION || '',
+                online_mode: city.START_IN_ONLINE_MODE ?? false,
+                ui_port: city.UI_PORT ?? 8000,
+                api_port: city.API_PORT ?? 8001,
+                timezone: city.TIMEZONE || 'UTC',
+            })
+        });
+        if (!updateRes.ok) {
+            const detail = await updateRes.json().catch(() => ({}));
+            throw new Error(detail.detail || 'City名の保存に失敗しました');
         }
     };
 
@@ -294,24 +316,28 @@ export default function TutorialWizard({
         }
 
         if (Object.keys(updates).length > 0) {
-            await fetch('/api/admin/env', {
+            const res = await fetch('/api/admin/env', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ updates })
             });
+            if (!res.ok) {
+                const detail = await res.json().catch(() => ({}));
+                throw new Error(detail.detail || 'APIキーの保存に失敗しました');
+            }
         }
     };
 
     const saveChronicleSettings = async () => {
         if (!state.createdPersonaId) return;
-        try {
-            await fetch(`/api/people/${state.createdPersonaId}/config`, {
-                method: 'PATCH',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ chronicle_enabled: state.chronicleEnabled }),
-            });
-        } catch (e) {
-            console.error('Failed to save Chronicle settings', e);
+        const res = await fetch(`/api/people/${state.createdPersonaId}/config`, {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ chronicle_enabled: state.chronicleEnabled }),
+        });
+        if (!res.ok) {
+            const detail = await res.json().catch(() => ({}));
+            throw new Error(detail.detail || 'Chronicle設定の保存に失敗しました');
         }
     };
 
