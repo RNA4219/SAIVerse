@@ -368,6 +368,9 @@ export default function ScheduleModal({ isOpen, onClose, personaId }: ScheduleMo
                                         setFormPlaybookParams({}); // Reset params when playbook changes
                                     }}
                                 >
+                                    {playbooks.length === 0 && (
+                                        <option value="" disabled>（読み込み中...）</option>
+                                    )}
                                     {playbooks.map(p => <option key={p} value={p}>{p}</option>)}
                                 </select>
                             </div>

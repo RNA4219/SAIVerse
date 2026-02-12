@@ -116,16 +116,20 @@ export default function ChatOptions({ isOpen, onClose, currentPlaybook, onPlaybo
                 try {
                     fetchedModels = await results[0].value.json();
                     setModels(fetchedModels);
-                } catch { failures.push('models'); }
+                } catch (e) { console.error("Failed to parse models response", e); failures.push('models'); }
             } else {
+                const reason = results[0].status === 'rejected' ? results[0].reason : `HTTP ${results[0].value.status}`;
+                console.error("Failed to fetch models:", reason);
                 failures.push('models');
             }
 
             // Playbooks
             if (results[1].status === 'fulfilled' && results[1].value.ok) {
                 try { setPlaybooks(await results[1].value.json()); }
-                catch { failures.push('playbooks'); }
+                catch (e) { console.error("Failed to parse playbooks response", e); failures.push('playbooks'); }
             } else {
+                const reason = results[1].status === 'rejected' ? results[1].reason : `HTTP ${results[1].value.status}`;
+                console.error("Failed to fetch playbooks:", reason);
                 failures.push('playbooks');
             }
 
@@ -144,16 +148,20 @@ export default function ChatOptions({ isOpen, onClose, currentPlaybook, onPlaybo
                     setMetabolismEnabled(config.metabolism_enabled ?? true);
                     setMetabolismKeepMessages(config.metabolism_keep_messages ?? null);
                     setMetabolismKeepMessagesDefault(config.metabolism_keep_messages_model_default ?? null);
-                } catch { failures.push('config'); }
+                } catch (e) { console.error("Failed to parse config response", e); failures.push('config'); }
             } else {
+                const reason = results[2].status === 'rejected' ? results[2].reason : `HTTP ${results[2].value.status}`;
+                console.error("Failed to fetch config:", reason);
                 failures.push('config');
             }
 
             // Cache
             if (results[3].status === 'fulfilled' && results[3].value.ok) {
                 try { setCacheConfig(await results[3].value.json()); }
-                catch { failures.push('cache'); }
+                catch (e) { console.error("Failed to parse cache response", e); failures.push('cache'); }
             } else {
+                const reason = results[3].status === 'rejected' ? results[3].reason : `HTTP ${results[3].value.status}`;
+                console.error("Failed to fetch cache:", reason);
                 failures.push('cache');
             }
 
@@ -423,6 +431,7 @@ export default function ChatOptions({ isOpen, onClose, currentPlaybook, onPlaybo
                                         value={currentPlaybook || ''}
                                         onChange={(e) => handlePlaybookChange(e.target.value || null)}
                                     >
+                                        <option value="">（デフォルト: 自動）</option>
                                         {playbooks.map(p => (
                                             <option key={p.id} value={p.id}>{p.name}</option>
                                         ))}
