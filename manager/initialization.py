@@ -47,10 +47,24 @@ class InitializationMixin:
         try:
             my_city_config = db.query(CityModel).filter(CityModel.CITYNAME == city_name).first()
             if not my_city_config:
-                raise ValueError(
-                    f"City '{city_name}' not found in the database. "
-                    "Please run 'python database/seed.py' first."
-                )
+                # Fallback: find by CITYID=1 and auto-repair CITYNAME.
+                # This handles cases where the tutorial overwrote the internal
+                # city identifier (e.g. with a non-ASCII display name).
+                my_city_config = db.query(CityModel).filter(CityModel.CITYID == 1).first()
+                if my_city_config:
+                    old_name = my_city_config.CITYNAME
+                    LOGGER.warning(
+                        "City '%s' not found but CITYID=1 exists with CITYNAME='%s'. "
+                        "Auto-repairing CITYNAME to '%s'.",
+                        city_name, old_name, city_name,
+                    )
+                    my_city_config.CITYNAME = city_name
+                    db.commit()
+                else:
+                    raise ValueError(
+                        f"City '{city_name}' not found in the database. "
+                        "Please run 'python database/seed.py' first."
+                    )
             
             self.city_id = my_city_config.CITYID
             self.city_name = my_city_config.CITYNAME
