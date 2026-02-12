@@ -326,7 +326,7 @@ export default function WorldEditor() {
                         </div>
                         <div className={styles.form}>
                             <h3>{selectedCity ? `City を編集` : '新しい City'}</h3>
-                            <Field label="名前"><Input value={formData.name || ''} onChange={(e: any) => setFormData({ ...formData, name: e.target.value })} /></Field>
+                            <Field label="名前（英数字・アンダースコアのみ）"><Input value={formData.name || ''} onChange={(e: any) => setFormData({ ...formData, name: e.target.value.replace(/[^a-zA-Z0-9_]/g, '') })} /></Field>
                             <Field label="説明"><TextArea value={formData.description || ''} onChange={(e: any) => setFormData({ ...formData, description: e.target.value })} /></Field>
                             <div className={styles.row}>
                                 <Field label="UI ポート"><NumInput value={formData.ui_port || ''} onChange={(e: any) => setFormData({ ...formData, ui_port: parseInt(e.target.value) })} /></Field>

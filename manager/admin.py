@@ -90,6 +90,20 @@ class AdminService(BlueprintMixin, HistoryMixin, PersonaMixin):
 
     # --- City management ---
 
+    @staticmethod
+    def _validate_city_name(name: str) -> Optional[str]:
+        """Validate city name is ASCII alphanumeric + underscore only.
+        Returns an error message string if invalid, None if valid."""
+        import re
+        if not name or not name.strip():
+            return "Error: City name cannot be empty."
+        if not re.match(r'^[a-zA-Z0-9_]+$', name):
+            return (
+                "Error: City name must contain only alphanumeric characters "
+                "and underscores (a-z, A-Z, 0-9, _)."
+            )
+        return None
+
     def update_city(
         self,
         city_id: int,
@@ -102,6 +116,10 @@ class AdminService(BlueprintMixin, HistoryMixin, PersonaMixin):
         host_avatar_path: Optional[str] = None,
         host_avatar_upload: Optional[str] = None,
     ) -> str:
+        name_error = self._validate_city_name(name)
+        if name_error:
+            return name_error
+
         db = self.SessionLocal()
         try:
             city = db.query(CityModel).filter(CityModel.CITYID == city_id).first()
@@ -171,6 +189,10 @@ class AdminService(BlueprintMixin, HistoryMixin, PersonaMixin):
     def create_city(
         self, name: str, description: str, ui_port: int, api_port: int, timezone_name: str
     ) -> str:
+        name_error = self._validate_city_name(name)
+        if name_error:
+            return name_error
+
         db = self.SessionLocal()
         try:
             if db.query(CityModel).filter_by(CITYNAME=name).first():
@@ -276,8 +298,9 @@ class AdminService(BlueprintMixin, HistoryMixin, PersonaMixin):
             city = db.query(CityModel).filter_by(CITYID=city_id).first()
             if not city:
                 return "Error: City not found."
-            if city.CITYNAME in ["city_a", "city_b"]:
-                return "Error: Seeded cities (city_a, city_b) cannot be deleted."
+            city_count = db.query(CityModel).count()
+            if city_count <= 1:
+                return "Error: Cannot delete the last remaining city."
             if city.CITYID == self.state.city_id:
                 return "Error: Cannot delete the currently running city."
 
