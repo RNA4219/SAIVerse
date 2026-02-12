@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, TYPE_CHECKING
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, event
 from sqlalchemy.orm import sessionmaker
 
 from saiverse.buildings import Building
@@ -23,6 +23,14 @@ LOGGER = logging.getLogger(__name__)
 class InitializationMixin:
     """Initialization helper methods for SAIVerseManager."""
 
+    @staticmethod
+    def _set_sqlite_pragmas(dbapi_connection, connection_record):
+        """Enable WAL mode and busy_timeout for concurrent read/write safety."""
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA busy_timeout=5000")
+        cursor.close()
+
     def _init_database(self, db_path: str) -> None:
         """Step 0: Database and Configuration Setup."""
         self.db_path = db_path
@@ -30,6 +38,7 @@ class InitializationMixin:
         self.city_host_avatar_path: Optional[str] = None
         DATABASE_URL = f"sqlite:///{db_path}"
         engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+        event.listen(engine, "connect", self._set_sqlite_pragmas)
         self._ensure_city_timezone_column(engine)
         self._ensure_user_avatar_column(engine)
         self._ensure_city_host_avatar_column(engine)
