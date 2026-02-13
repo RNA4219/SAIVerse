@@ -40,6 +40,7 @@ interface ModelInfo {
     display_name: string;
     provider: string;
     is_available: boolean;
+    supports_structured_output?: boolean;
 }
 
 type TabId = 'env' | 'world' | 'db' | 'models' | 'about';
@@ -587,7 +588,7 @@ export default function GlobalSettingsModal({ isOpen, onClose }: GlobalSettingsM
                                                     {expandedModelRole === role && (
                                                         <div className={styles.roleDropdown}>
                                                             {modelsAvailable
-                                                                .filter(m => m.is_available)
+                                                                .filter(m => m.is_available && (role !== 'agentic_model' || m.supports_structured_output !== false))
                                                                 .map(model => (
                                                                     <div
                                                                         key={model.id}

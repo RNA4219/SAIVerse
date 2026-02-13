@@ -42,6 +42,7 @@ class ModelAvailability(BaseModel):
     display_name: str
     provider: str
     is_available: bool
+    supports_structured_output: bool = True
 
 
 class AvailableModelsResponse(BaseModel):
@@ -237,7 +238,8 @@ def get_available_models():
     from saiverse.model_configs import (
         get_model_choices_with_display_names,
         get_model_config,
-        get_model_provider
+        get_model_provider,
+        supports_structured_output,
     )
 
     models = []
@@ -254,7 +256,8 @@ def get_available_models():
             id=model_id,
             display_name=display_name,
             provider=provider,
-            is_available=is_available
+            is_available=is_available,
+            supports_structured_output=supports_structured_output(model_id),
         ))
 
     return AvailableModelsResponse(models=models)
