@@ -1201,6 +1201,14 @@ class SEARuntime:
             if not supports_structured_output(base_model):
                 # Model doesn't support structured output, switch to agentic model
                 agentic_model = get_agentic_model()
+                # Guard: if the agentic model itself doesn't support structured output,
+                # fall back to the built-in default instead
+                if not supports_structured_output(agentic_model):
+                    builtin_default = "gemini-2.5-flash-lite-preview-09-2025"
+                    LOGGER.warning(
+                        "[sea] Agentic model '%s' also doesn't support structured output, "
+                        "falling back to built-in default: %s", agentic_model, builtin_default)
+                    agentic_model = builtin_default
                 LOGGER.info("[sea] Model '%s' doesn't support structured output, switching to agentic model: %s",
                            base_model, agentic_model)
                 try:
