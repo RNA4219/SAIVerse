@@ -479,8 +479,8 @@ def auto_configure_models(
     """Auto-configure all 6 model role env vars based on available API keys.
 
     If provider is not specified, auto-detects the highest-priority provider
-    with an API key set. Writes to .env, updates os.environ, and sets the
-    session model on the manager.
+    with an API key set. Writes to .env, updates os.environ, and updates
+    the base default model for personas without an explicit DB override.
     """
     from api.routes.admin import write_env_updates
     from saiverse.model_configs import get_model_display_name
@@ -534,13 +534,13 @@ def auto_configure_models(
     if env_updates:
         write_env_updates(env_updates)
 
-    # 4. Set session model on manager
+    # 4. Update base default model (without global override)
     default_model = preset.get("default_model")
     if default_model:
         try:
-            manager.set_model(default_model, None)
+            manager.update_default_model(default_model)
         except Exception as exc:
-            LOGGER.warning("Failed to set session model to %s: %s", default_model, exc)
+            LOGGER.warning("Failed to update default model to %s: %s", default_model, exc)
 
     LOGGER.info(
         "Auto-configured models for provider=%s: %s",

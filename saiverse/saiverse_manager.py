@@ -692,6 +692,54 @@ class SAIVerseManager(
         for persona in self.personas.values():
             persona.set_model(model, self.context_length, self.provider, self.model_parameter_overrides)
 
+    def update_default_model(self, model: str) -> None:
+        """Update the base default model without setting a global override.
+
+        Unlike ``set_model()``, this does NOT create a session-level global
+        override.  It updates ``_base_model`` and refreshes each persona that
+        has no explicit ``DEFAULT_MODEL`` in the database.
+        """
+        from saiverse.model_configs import get_context_length, get_model_provider
+
+        logging.info(
+            "Updating base default model from '%s' to '%s' (no global override).",
+            getattr(self, "_base_model", None),
+            model,
+        )
+        self._base_model = model
+
+        db = self.SessionLocal()
+        try:
+            for pid, persona in self.personas.items():
+                ai = db.query(AIModel).filter_by(AIID=pid).first()
+                if not ai:
+                    continue
+                if ai.DEFAULT_MODEL:
+                    # Persona has an explicit model in DB; leave it alone
+                    logging.debug(
+                        "Persona '%s' has explicit DEFAULT_MODEL='%s'; skipping.",
+                        pid,
+                        ai.DEFAULT_MODEL,
+                    )
+                    continue
+                new_ctx = get_context_length(model)
+                new_provider = get_model_provider(model)
+                persona.set_model(model, new_ctx, new_provider)
+                logging.info(
+                    "Updated persona '%s' to base default model '%s'.",
+                    pid,
+                    model,
+                )
+        except Exception as e:
+            logging.error(
+                "Failed to update personas to new default model '%s': %s",
+                model,
+                e,
+                exc_info=True,
+            )
+        finally:
+            db.close()
+
     def set_model_parameters(self, parameters: Optional[Dict[str, Any]] = None) -> None:
         """Update model parameters for the current override model."""
         self.model_parameter_overrides = dict(parameters or {})
