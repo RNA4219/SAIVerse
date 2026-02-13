@@ -38,7 +38,7 @@ def _check_cuda_available() -> bool:
 class Embedder:
     def __init__(
         self,
-        model: str = "BAAI/bge-m3",
+        model: str = "intfloat/multilingual-e5-small",
         *,
         local_model_path: str | None = None,
         model_dim: int | None = None,
@@ -95,9 +95,30 @@ class Embedder:
                     if use_cuda:
                         logger.warning("CUDA initialization failed (%s); falling back to CPU.", e)
                         kwargs.pop("cuda", None)
-                        cached = TextEmbedding(model_name=self.model_name, **kwargs)
-                    else:
-                        raise
+                        try:
+                            cached = TextEmbedding(model_name=self.model_name, **kwargs)
+                        except ValueError as e2:
+                            e = e2  # fall through to auto-download check below
+                            cached = None
+                    if cached is None:
+                        # Model not natively supported by fastembed — try auto-download
+                        if not resolved_local_path and "not supported" in str(e).lower():
+                            logger.warning(
+                                "Model '%s' not natively supported by fastembed. "
+                                "Attempting auto-download from HuggingFace...",
+                                self.model_name,
+                            )
+                            downloaded_path = _auto_download_model(self.model_name)
+                            kwargs = _build_local_model_kwargs(
+                                model_name=self.model_name,
+                                local_model_path=downloaded_path,
+                                explicit_dim=model_dim,
+                            )
+                            if use_cuda:
+                                kwargs["cuda"] = True
+                            cached = TextEmbedding(model_name=self.model_name, **kwargs)
+                        else:
+                            raise e
 
                 _EMBEDDING_MODEL_CACHE[cache_key] = cached
             self.model = cached
@@ -131,6 +152,39 @@ class Embedder:
 
         vectors = list(self.model.embed(texts))
         return [list(map(float, v)) for v in vectors]
+
+
+def _auto_download_model(model_name: str) -> str:
+    """Auto-download a model from HuggingFace to the sbert/ directory.
+
+    Downloads only ONNX and tokenizer/config files (excludes PyTorch weights).
+    Returns the path to the downloaded model directory.
+    """
+    logger = logging.getLogger(__name__)
+    sbert_root = Path(__file__).resolve().parents[2] / "sbert"
+    model_suffix = model_name.split("/")[-1]
+    target_dir = sbert_root / model_suffix
+    if target_dir.exists():
+        return str(target_dir)
+
+    logger.info(
+        "Downloading model '%s' to %s (this may take a few minutes)...",
+        model_name,
+        target_dir,
+    )
+    try:
+        from huggingface_hub import snapshot_download
+
+        snapshot_download(
+            model_name,
+            local_dir=str(target_dir),
+            ignore_patterns=["*.bin", "*.safetensors", "*.h5", "openvino/*", "*.ot"],
+        )
+    except Exception:
+        logger.exception("Failed to auto-download model '%s'", model_name)
+        raise
+    logger.info("Model '%s' downloaded successfully.", model_name)
+    return str(target_dir)
 
 
 def _build_local_model_kwargs(

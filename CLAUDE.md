@@ -548,7 +548,7 @@ Key packages (see `requirements.txt`):
 - `fastembed>=0.7.3` (SAIMemory embeddings)
 - `discord.py>=2.4.0` (optional Discord gateway)
 
-Embeddings models in `sbert/` (e.g., `intfloat/multilingual-e5-base`) are used if present, otherwise downloaded on first run.
+Embeddings models in `sbert/` (e.g., `intfloat/multilingual-e5-small`) are used if present, otherwise downloaded on first run.
 
 ## Environment Variables
 
@@ -556,7 +556,7 @@ Critical settings (see `.env.example`):
 - `OPENAI_API_KEY`, `GEMINI_API_KEY`, `CLAUDE_API_KEY`, `OLLAMA_BASE_URL`
 - `SDS_URL` (default: http://127.0.0.1:8080)
 - `SAIVERSE_LOG_LEVEL` (DEBUG/INFO/WARNING)
-- `SAIMEMORY_EMBED_MODEL` (e.g., intfloat/multilingual-e5-base)
+- `SAIMEMORY_EMBED_MODEL` (e.g., intfloat/multilingual-e5-small)
 - `SAIMEMORY_BACKUP_ON_START=true` (auto-backup persona memory.db on startup)
 - `SAIVERSE_DB_BACKUP_ON_START=true` (auto-backup saiverse.db on startup, **recommended**)
 - `SAIVERSE_DB_BACKUP_KEEP=10` (number of saiverse.db backups to keep)

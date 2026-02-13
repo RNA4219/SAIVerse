@@ -82,7 +82,7 @@ SearXNG も **AGPL-3.0** ですが、独立したプロセスとして起動し 
 | コンポーネント | ライセンス | 用途 | 備考 |
 |---|---|---|---|
 | **SearXNG** | **AGPL-3.0** | Web 検索エンジン | 独立プロセスとして HTTP API 経由で使用。コピーレフト伝播なし |
-| BAAI/bge-m3 | MIT | 埋め込みモデル (デフォルト) | |
+| intfloat/multilingual-e5-small | MIT | 埋め込みモデル (デフォルト) | |
 | intfloat/multilingual-e5-base | MIT | 埋め込みモデル (代替) | |
 
 ---

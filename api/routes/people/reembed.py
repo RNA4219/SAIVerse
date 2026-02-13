@@ -101,6 +101,11 @@ def _run_reembed_task(persona_id: str, force: bool):
                     with _reembed_lock:
                         _reembed_status[persona_id] = {"running": True, "progress": fixed, "total": total, "message": f"Processing {fixed}/{total}..."}
             
+            # Record the current embed model name so future startups know
+            # that embeddings match the current model.
+            from sai_memory.memory.storage import set_embed_metadata
+            set_embed_metadata(conn, "embed_model", settings.embed_model)
+
             with _reembed_lock:
                 _reembed_status[persona_id] = {"running": False, "progress": fixed, "total": total, "message": f"Re-embedded {fixed} messages."}
         finally:

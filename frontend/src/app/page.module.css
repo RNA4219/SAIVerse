@@ -763,6 +763,87 @@
     color: #fbbf24;
 }
 
+/* Reembed notification banner */
+.reembedBanner {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.6rem 1rem;
+    background: #ede9fe;
+    border-bottom: 1px solid #8b5cf6;
+    color: #4c1d95;
+    font-size: 0.82rem;
+    line-height: 1.4;
+    flex-shrink: 0;
+}
+
+.reembedBannerContent {
+    flex: 1;
+    min-width: 0;
+}
+
+.reembedRunButton {
+    background: #7c3aed;
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    padding: 0.3rem 0.8rem;
+    font-size: 0.78rem;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.reembedRunButton:hover {
+    background: #6d28d9;
+}
+
+.reembedRunButton:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+.reembedLaterButton {
+    background: transparent;
+    color: #6d28d9;
+    border: 1px solid #8b5cf6;
+    border-radius: 4px;
+    padding: 0.3rem 0.8rem;
+    font-size: 0.78rem;
+    font-weight: 500;
+    cursor: pointer;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.reembedLaterButton:hover {
+    background: rgba(139, 92, 246, 0.1);
+}
+
+:global([data-theme="dark"]) .reembedBanner {
+    background: #2e1065;
+    border-color: #7c3aed;
+    color: #c4b5fd;
+}
+
+:global([data-theme="dark"]) .reembedRunButton {
+    background: #7c3aed;
+}
+
+:global([data-theme="dark"]) .reembedRunButton:hover {
+    background: #6d28d9;
+}
+
+:global([data-theme="dark"]) .reembedLaterButton {
+    color: #c4b5fd;
+    border-color: #7c3aed;
+}
+
+:global([data-theme="dark"]) .reembedLaterButton:hover {
+    background: rgba(124, 58, 237, 0.2);
+}
+
 :global([data-theme="dark"]) .assistant .bubble {
     background: #262626;
 }
