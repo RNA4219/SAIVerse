@@ -22,7 +22,7 @@ SAIVerseの設定オプションを説明します。
 
 | 変数名 | デフォルト | 説明 |
 |--------|-----------|------|
-| `SAIMEMORY_EMBED_MODEL` | `intfloat/multilingual-e5-base` | 埋め込みモデル |
+| `SAIMEMORY_EMBED_MODEL` | `intfloat/multilingual-e5-small` | 埋め込みモデル |
 | `SAIMEMORY_EMBED_MODEL_PATH` | - | ローカルモデルのパス |
 | `SAIMEMORY_LAST_MESSAGES` | 20 | 想起時の最大メッセージ数 |
 

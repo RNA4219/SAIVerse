@@ -111,6 +111,11 @@ class SAIMemoryAdapter:
             self.embedder = None
             raise exc
 
+        # Detect embedding model changes
+        self.embed_model_changed = False
+        if self.conn and self.embedder:
+            self._check_embed_model_change()
+
         LOGGER.info(
             "SAIMemory adapter initialised for persona=%s db=%s (resource=%s)",
             self.persona_id,
@@ -120,6 +125,42 @@ class SAIMemoryAdapter:
 
         if _auto_backup_enabled():
             threading.Thread(target=self._run_startup_backup, daemon=True).start()
+
+    # ------------------------------------------------------------------
+    # Embedding model change detection
+    # ------------------------------------------------------------------
+    def _check_embed_model_change(self) -> None:
+        """Detect if the embedding model has changed since the last reembed."""
+        from sai_memory.memory.storage import get_embed_metadata, set_embed_metadata
+
+        recorded_model = get_embed_metadata(self.conn, "embed_model")
+        current_model = self.settings.embed_model
+
+        row = self.conn.execute(
+            "SELECT EXISTS(SELECT 1 FROM message_embeddings LIMIT 1)"
+        ).fetchone()
+        has_embeddings = bool(row and row[0])
+
+        if recorded_model is None and has_embeddings:
+            # Upgraded from old version: no metadata recorded but embeddings exist
+            self.embed_model_changed = True
+            LOGGER.warning(
+                "Persona %s: embed_model metadata not found but embeddings exist. "
+                "Likely upgraded from old version. Reembed recommended.",
+                self.persona_id,
+            )
+        elif recorded_model and recorded_model != current_model:
+            # Model explicitly changed
+            self.embed_model_changed = True
+            LOGGER.warning(
+                "Persona %s: embed_model changed from '%s' to '%s'. Reembed recommended.",
+                self.persona_id,
+                recorded_model,
+                current_model,
+            )
+        elif not has_embeddings:
+            # Fresh database — record current model immediately
+            set_embed_metadata(self.conn, "embed_model", current_model)
 
     # ------------------------------------------------------------------
     # Public API
@@ -571,13 +612,10 @@ class SAIMemoryAdapter:
         try:
             with self._db_lock:
                 # Check message exists
-                cur = self.conn.execute("SELECT content FROM messages WHERE id=?", (message_id,))  # type: ignore[attr-defined]
-                row = cur.fetchone()
-                if row is None:
+                cur = self.conn.execute("SELECT 1 FROM messages WHERE id=?", (message_id,))  # type: ignore[attr-defined]
+                if cur.fetchone() is None:
                     return False
-                
-                current_content = row[0]
-                    
+
                 # Update fields as needed
                 if new_content is not None and new_created_at is not None:
                     self.conn.execute(  # type: ignore[attr-defined]

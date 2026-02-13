@@ -113,6 +113,22 @@ class PersonaMixin:
                 "Loaded %d personas from database (%d failed).",
                 len(self.personas), failed_count,
             )
+            # Check for embedding model changes across all loaded personas
+            changed_personas = [
+                pid
+                for pid, p in self.personas.items()
+                if getattr(getattr(p, "memory", None), "embed_model_changed", False)
+            ]
+            if changed_personas:
+                names = ", ".join(changed_personas)
+                self.startup_warnings.append({
+                    "source": "embed_model_mismatch",
+                    "message": (
+                        f"Embeddingモデルが変更されました。記憶想起を正常に動作させるため、"
+                        f"再計算を推奨します。（対象: {names}）"
+                    ),
+                    "persona_ids": changed_personas,
+                })
         except Exception as exc:
             msg = f"Failed to query personas from DB: {exc}"
             logging.error(msg, exc_info=True)

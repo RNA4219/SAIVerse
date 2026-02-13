@@ -121,6 +121,17 @@ def init_db(db_path: str, *, check_same_thread: bool = True) -> sqlite3.Connecti
     conn.execute("CREATE INDEX IF NOT EXISTS idx_stelis_parent ON stelis_threads(parent_thread_id)")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_stelis_status ON stelis_threads(status)")
 
+    # Key-value metadata table for system-level settings (e.g., embedding model name)
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS embed_metadata (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+        """
+    )
+
     conn.commit()
     return conn
 
@@ -888,4 +899,34 @@ def delete_stelis_thread(conn: sqlite3.Connection, thread_id: str, cascade: bool
     except Exception as e:
         debug(f"Error deleting stelis thread {thread_id}: {e}")
         return False
+
+
+# ---------------------------------------------------------------------------
+# Embed metadata helpers
+# ---------------------------------------------------------------------------
+
+def get_embed_metadata(conn: sqlite3.Connection, key: str) -> str | None:
+    """Return the value for *key* from the embed_metadata table, or None."""
+    try:
+        row = conn.execute(
+            "SELECT value FROM embed_metadata WHERE key = ?", (key,)
+        ).fetchone()
+        return row[0] if row else None
+    except sqlite3.OperationalError:
+        # Table may not exist yet in very old databases
+        return None
+
+
+def set_embed_metadata(conn: sqlite3.Connection, key: str, value: str) -> None:
+    """Upsert *key*/*value* into the embed_metadata table."""
+    now = datetime.utcnow().isoformat()
+    conn.execute(
+        """
+        INSERT INTO embed_metadata (key, value, updated_at)
+        VALUES (?, ?, ?)
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+        """,
+        (key, value, now),
+    )
+    conn.commit()
 

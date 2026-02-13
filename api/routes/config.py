@@ -634,3 +634,17 @@ def get_startup_warnings(manager=Depends(get_manager)):
     """Return warnings collected during startup (e.g. failed persona loads)."""
     warnings = getattr(manager, "startup_warnings", [])
     return {"warnings": warnings}
+
+
+@router.get("/reembed-check")
+def check_reembed_needed(manager=Depends(get_manager)):
+    """Return list of personas that need re-embedding due to model changes."""
+    warnings = getattr(manager, "startup_warnings", [])
+    for w in warnings:
+        if isinstance(w, dict) and w.get("source") == "embed_model_mismatch":
+            return {
+                "needed": True,
+                "persona_ids": w.get("persona_ids", []),
+                "message": w.get("message", ""),
+            }
+    return {"needed": False, "persona_ids": [], "message": ""}

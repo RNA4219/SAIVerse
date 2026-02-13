@@ -82,9 +82,9 @@ def load_settings() -> Settings:
     # placing .env inside sai_memory doesn't create sai_memory/sai_memory/...
     db_path = os.getenv("SAIMEMORY_DB_PATH", "memory.db")
     resource_id = os.getenv("SAIMEMORY_RESOURCE_ID", "default")
-    # Embedding model (fastembed). Keep current default for compatibility.
+    # Embedding model (fastembed).
     embed_model_env = os.getenv("SAIMEMORY_EMBED_MODEL")
-    embed_model = embed_model_env.strip() if embed_model_env else "BAAI/bge-small-en-v1.5"
+    embed_model = embed_model_env.strip() if embed_model_env else "intfloat/multilingual-e5-small"
     embed_model_path_env = os.getenv("SAIMEMORY_EMBED_MODEL_PATH")
     embed_model_path = embed_model_path_env.strip() if embed_model_path_env else None
     embed_model_dim_env = os.getenv("SAIMEMORY_EMBED_MODEL_DIM")
@@ -111,11 +111,16 @@ def load_settings() -> Settings:
         )
 
     if not embed_model_path and not embed_model_env:
-        repo_root = Path(__file__).resolve().parents[1]
-        default_dir = sbert_root / "multilingual-e5-base"
-        if default_dir.exists():
-            embed_model_path = str(default_dir)
-            embed_model = "intfloat/multilingual-e5-base"
+        # Check for local model snapshots (new default first, then legacy)
+        for fallback_suffix, fallback_model in [
+            ("multilingual-e5-small", "intfloat/multilingual-e5-small"),
+            ("multilingual-e5-base", "intfloat/multilingual-e5-base"),
+        ]:
+            fallback_dir = sbert_root / fallback_suffix
+            if fallback_dir.exists():
+                embed_model_path = str(fallback_dir)
+                embed_model = fallback_model
+                break
 
     memory_enabled = _get_bool("SAIMEMORY_MEMORY", True)
     last_messages = _get_int("SAIMEMORY_MEMORY_LAST_MESSAGES", 8)

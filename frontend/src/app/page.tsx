@@ -16,7 +16,7 @@ import SaiverseLink from '@/components/SaiverseLink';
 import ItemModal from '@/components/ItemModal';
 import ContextPreviewModal, { ContextPreviewData } from '@/components/ContextPreviewModal';
 import ModalOverlay from '@/components/common/ModalOverlay';
-import { Send, Plus, Paperclip, Eye, X, Info, Users, Menu, Copy, Check, SlidersHorizontal, ChevronDown, AlertTriangle, ArrowUpCircle, Loader } from 'lucide-react';
+import { Send, Plus, Paperclip, Eye, X, Info, Users, Menu, Copy, Check, SlidersHorizontal, ChevronDown, AlertTriangle, ArrowUpCircle, Loader, RefreshCw } from 'lucide-react';
 import { useActivityTracker } from '@/hooks/useActivityTracker';
 
 // Allow className on HTML elements used by thinking blocks (<details>, <div>, <summary>)
@@ -275,6 +275,11 @@ export default function Home() {
     // Timezone mismatch popup
     const [tzMismatch, setTzMismatch] = useState<{cityTz: string; browserTz: string; cityId: number} | null>(null);
     const [tzUpdating, setTzUpdating] = useState(false);
+
+    // Reembed notification
+    const [reembedNeeded, setReembedNeeded] = useState<{persona_ids: string[], message: string} | null>(null);
+    const [isReembeddingAll, setIsReembeddingAll] = useState(false);
+    const [reembedBannerProgress, setReembedBannerProgress] = useState<string | null>(null);
 
     // Update system
     const [app_state_version, setAppStateVersion] = useState('');
@@ -622,6 +627,16 @@ export default function Home() {
             })
             .catch(err => console.error('Timezone check failed:', err));
 
+        // Check if embedding model changed and reembed is needed
+        fetch('/api/config/reembed-check')
+            .then(res => res.ok ? res.json() : null)
+            .then(data => {
+                if (data?.needed) {
+                    setReembedNeeded({ persona_ids: data.persona_ids, message: data.message });
+                }
+            })
+            .catch(err => console.error('Failed to check reembed', err));
+
         // Check for updates
         fetch('/api/system/version')
             .then(res => res.ok ? res.json() : null)
@@ -722,6 +737,52 @@ export default function Home() {
 
         return () => clearInterval(reconnectInterval);
     }, [backendConnected, isUpdating]);
+
+    // --- Reembed handlers ---
+    const handleReembedAll = async () => {
+        if (!reembedNeeded || isReembeddingAll) return;
+        setIsReembeddingAll(true);
+        setReembedBannerProgress('Starting...');
+
+        for (const personaId of reembedNeeded.persona_ids) {
+            try {
+                setReembedBannerProgress(`Re-embedding ${personaId}...`);
+                const res = await fetch(`/api/people/${personaId}/reembed`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ force: true }),
+                });
+                if (!res.ok) continue;
+
+                // Poll until done
+                let done = false;
+                while (!done) {
+                    await new Promise(r => setTimeout(r, 1500));
+                    const statusRes = await fetch(`/api/people/${personaId}/reembed/status`);
+                    if (!statusRes.ok) break;
+                    const status = await statusRes.json();
+                    if (status.running) {
+                        setReembedBannerProgress(`${personaId}: ${status.message || `${status.progress}/${status.total}`}`);
+                    } else {
+                        done = true;
+                    }
+                }
+            } catch (err) {
+                console.error(`Reembed failed for ${personaId}`, err);
+            }
+        }
+
+        setIsReembeddingAll(false);
+        setReembedBannerProgress(null);
+        setReembedNeeded(null);
+    };
+
+    const handleReembedLater = () => {
+        setReembedNeeded(null);
+        const toastId = `reembed-later-${Date.now()}`;
+        setToasts(prev => [...prev, { id: toastId, content: '設定 > メモリ管理 > エンベディング管理から再実行できます。' }]);
+        setTimeout(() => setToasts(prev => prev.filter(t => t.id !== toastId)), 8000);
+    };
 
     const handleTriggerUpdate = async () => {
         if (!updateAvailable) return;
@@ -1371,6 +1432,31 @@ export default function Home() {
                         >
                             <X size={14} />
                         </button>
+                    </div>
+                )}
+
+                {reembedNeeded && (
+                    <div className={styles.reembedBanner}>
+                        <RefreshCw size={16} className={isReembeddingAll ? styles.spinIcon : undefined} />
+                        <div className={styles.reembedBannerContent}>
+                            <div>{reembedNeeded.message}</div>
+                            {reembedBannerProgress && <div>{reembedBannerProgress}</div>}
+                        </div>
+                        <button
+                            className={styles.reembedRunButton}
+                            onClick={handleReembedAll}
+                            disabled={isReembeddingAll}
+                        >
+                            {isReembeddingAll ? 'Processing...' : '再計算する'}
+                        </button>
+                        {!isReembeddingAll && (
+                            <button
+                                className={styles.reembedLaterButton}
+                                onClick={handleReembedLater}
+                            >
+                                後で
+                            </button>
+                        )}
                     </div>
                 )}
 

@@ -16,9 +16,9 @@ SAIVerseの環境変数一覧です。`.env` ファイルで設定します。
 
 | 変数名 | デフォルト | 説明 |
 |--------|-----------|------|
-| `SAIMEMORY_EMBED_MODEL` | `intfloat/multilingual-e5-base` | 埋め込みモデル |
+| `SAIMEMORY_EMBED_MODEL` | `intfloat/multilingual-e5-small` | 埋め込みモデル |
 | `SAIMEMORY_EMBED_MODEL_PATH` | - | ローカルモデルのパス |
-| `SAIMEMORY_EMBED_MODEL_DIM` | 768 | 埋め込み次元数 |
+| `SAIMEMORY_EMBED_MODEL_DIM` | 384 | 埋め込み次元数 |
 | `SAIMEMORY_LAST_MESSAGES` | 20 | 想起時の最大メッセージ数 |
 | `SAIMEMORY_BACKUP_ON_START` | false | 起動時に自動バックアップ |
 | `SAIMEMORY_RDIFF_PATH` | - | rdiff-backupバイナリのパス |
@@ -52,7 +52,7 @@ OPENAI_API_KEY=sk-XXXXXXXX
 CLAUDE_API_KEY=sk-ant-XXXXXXXX
 
 # SAIMemory
-SAIMEMORY_EMBED_MODEL=intfloat/multilingual-e5-base
+SAIMEMORY_EMBED_MODEL=intfloat/multilingual-e5-small
 SAIMEMORY_EMBED_MODEL_PATH=/path/to/model
 
 # ネットワーク

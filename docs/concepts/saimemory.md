@@ -87,12 +87,12 @@ tree_md = memopedia.get_tree_markdown(thread_id="main")
 
 ## 埋め込みモデル
 
-デフォルトでは `intfloat/multilingual-e5-base` を使用。
+デフォルトでは `intfloat/multilingual-e5-small` を使用（384次元、日本語を含む100言語対応）。
 
 ### 設定
 
 ```env
-SAIMEMORY_EMBED_MODEL=intfloat/multilingual-e5-base
+SAIMEMORY_EMBED_MODEL=intfloat/multilingual-e5-small
 SAIMEMORY_EMBED_MODEL_PATH=/path/to/local/model
 ```
 
@@ -102,11 +102,12 @@ SAIMEMORY_EMBED_MODEL_PATH=/path/to/local/model
 
 ```
 sbert/
-└── intfloat/
-    └── multilingual-e5-base/
-        ├── config.json
-        ├── model.safetensors
-        └── ...
+└── multilingual-e5-small/
+    ├── onnx/
+    │   └── model.onnx
+    ├── config.json
+    ├── tokenizer.json
+    └── ...
 ```
 
 ## 保守スクリプト

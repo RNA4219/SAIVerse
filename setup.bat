@@ -214,7 +214,7 @@ if %errorlevel% neq 0 (
 REM --- 11. Pre-download embedding model ---
 echo.
 echo [SETUP] Downloading embedding model (first time only, may take a few minutes)...
-python -c "from fastembed import TextEmbedding; TextEmbedding('BAAI/bge-m3')"
+python -c "from huggingface_hub import snapshot_download; snapshot_download('intfloat/multilingual-e5-small', local_dir='sbert/multilingual-e5-small', ignore_patterns=['*.bin', '*.safetensors', '*.h5', 'openvino/*', '*.ot'])"
 if %errorlevel% neq 0 (
     echo [WARN] Embedding model download failed. It will retry on first launch.
 ) else (
