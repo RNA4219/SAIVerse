@@ -193,6 +193,21 @@ async def trigger_update():
                         proc.kill()
             except OSError as e:
                 LOGGER.warning("Failed to terminate child process: %s", e)
+        # Fallback: kill entire process tree via OS.
+        # The self_updater runs detached (CREATE_NEW_PROCESS_GROUP) so it
+        # won't be affected. This catches any children we failed to track.
+        if sys.platform == "win32":
+            try:
+                DETACHED_PROCESS = 0x00000008
+                CREATE_NEW_PROCESS_GROUP = 0x00000200
+                subprocess.Popen(
+                    ["taskkill", "/T", "/F", "/PID", str(os.getpid())],
+                    creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP,
+                    close_fds=True,
+                )
+                time.sleep(5)  # Wait to be killed by taskkill
+            except OSError:
+                pass
         os._exit(0)
 
     timer = threading.Timer(3.0, _force_exit)
