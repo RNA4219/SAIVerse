@@ -208,7 +208,7 @@ python scripts/migrate_to_user_data.py             # Execute
 - The "soul" of each AI persona
 - `run_pulse()` executes autonomous "cognition→decision→action" cycles
 - Integrates with SAIMemory, emotion module, action handler, and task storage
-- Note: On `sea_framework` branch, conversation flow is being migrated to SEA runtime
+- Conversation flow is driven by SEA runtime (playbook-based)
 
 **SEARuntime** (`sea/runtime.py`)
 - Executes playbooks (workflow graphs) for conversation routing using LangGraph
@@ -237,7 +237,7 @@ python scripts/migrate_to_user_data.py             # Execute
 
 **User Interaction**: UI → SAIVerseManager → PersonaCore → LLM + Tools → ActionHandler → SAIMemory + BuildingHistory
 
-**Autonomous Pulse**: ConversationManager → PersonaCore.run_pulse() → [SEARuntime (sea_framework branch)] → think/speak nodes → SAIMemory
+**Autonomous Pulse**: ConversationManager → PersonaCore.run_pulse() → SEARuntime → think/speak nodes → SAIMemory
 
 **Inter-City Travel** (DB-mediated, not direct API calls):
 1. Source city writes `VisitingAI` record with status='requested'
@@ -377,7 +377,7 @@ User data is stored outside the repository in `~/.saiverse/` (or `SAIVERSE_HOME`
 - **ThinkingRequest**: queues remote thinking calls (status: pending/processed/error)
 - **Tool** + **BuildingToolLink**: associates available tools with buildings
 - **Blueprint**: templates for creating new personas
-- **Playbook** (on sea_framework branch): stores SEA playbook schemas and nodes
+- **Playbook**: stores SEA playbook schemas and nodes
 
 ### LLM Integration (`llm_clients/`, `saiverse/llm_router.py`)
 - Factory pattern: `get_llm_client(model_name, config)` returns provider-specific client
@@ -401,7 +401,7 @@ User data is stored outside the repository in `~/.saiverse/` (or `SAIVERSE_HOME`
   - `task_*.py`: task_request_creation, task_change_active, task_update_step, task_close
   - `thread_switch.py`: switch SAIMemory active thread
   - `memory_recall.py`: semantic recall via MemoryCore
-  - `save_playbook.py`: persist new playbook to DB (sea_framework branch)
+  - `save_playbook.py`: persist new playbook to DB
 
 ### Action Handler (`saiverse/action_handler.py`)
 - Parses `::act ... ::end` blocks from LLM responses
@@ -500,11 +500,11 @@ Intent documents record the "why" that code alone cannot express. They prevent w
 - Pulse internal thoughts: tag='internal', include pulse_id for grouping
 - User conversations: tag='conversation'
 
-### Branch Context
-- **Current branch**: `sea_framework`
-- **Status**: SEA runtime and playbook system fully integrated with LangGraph, replacing direct `run_pulse()` calls
-- **Meta playbooks**: `meta_user.json` (user input flow), `meta_auto.json` (autonomous pulse flow)
-- **Pending work**: Building-scoped playbooks, advanced playbook features
+### Branch Strategy
+- **main**: Stable, tested releases
+- **develop**: Integration branch (default PR target). Feature branches merge here first
+- **feature/\***: Individual feature branches, created from develop
+- **Flow**: `feature/*` → PR → `develop` → (tested) → PR → `main`
 
 ### Testing
 - Tests use `unittest` framework (pytest also works)
