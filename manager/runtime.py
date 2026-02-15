@@ -122,7 +122,12 @@ class RuntimeService(
                 )
                 avatar_data = None
                 if getattr(user, "AVATAR_IMAGE", None):
-                    avatar_data = self.manager._load_avatar_data(Path(user.AVATAR_IMAGE))
+                    from manager.user_state import UserStateMixin
+                    avatar_path = UserStateMixin._resolve_avatar_to_path(
+                        user.AVATAR_IMAGE
+                    )
+                    if avatar_path:
+                        avatar_data = self.manager._load_avatar_data(avatar_path)
                 self.state.user_avatar_data = avatar_data or self.manager.default_avatar
                 self.id_to_name_map[str(self.state.user_id)] = (
                     self.state.user_display_name
