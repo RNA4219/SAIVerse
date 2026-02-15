@@ -3,29 +3,80 @@ from __future__ import annotations
 import logging
 import os
 from pathlib import Path
-from typing import Optional
-
-# Model for image summary generation (vision-capable model required)
-IMAGE_SUMMARY_MODEL = os.getenv("SAIVERSE_IMAGE_SUMMARY_MODEL", "gemini-2.5-flash-lite")
+from typing import Any, Dict, List, Optional
 
 from .media_utils import (
     get_media_summary,
-    load_image_bytes_for_llm,
     save_media_summary,
 )
 
-try:  # pragma: no cover - optional dependency
-    from google.genai import types  # type: ignore
-except ImportError:  # pragma: no cover
-    types = None  # type: ignore
-
-from llm_clients.gemini_utils import build_gemini_clients
-
 LOGGER = logging.getLogger(__name__)
+
+# Model config key or API model name for summary generation (vision-capable model required for images)
+_IMAGE_SUMMARY_MODEL_RAW = os.getenv("SAIVERSE_IMAGE_SUMMARY_MODEL", "gemini-2.5-flash-lite")
+
+# Cached client
+_summary_client: Any = None
+_summary_model_key: Optional[str] = None
+
+
+def _get_summary_client() -> Any:
+    """Get or create the LLM client for summary generation.
+
+    Uses the standard LLM client factory so any configured provider
+    (Gemini, OpenAI, Anthropic, etc.) can be used.
+    """
+    global _summary_client, _summary_model_key
+
+    if _summary_client is not None and _summary_model_key == _IMAGE_SUMMARY_MODEL_RAW:
+        return _summary_client
+
+    from saiverse.model_configs import find_model_config
+    from llm_clients.factory import get_llm_client
+
+    config_key, config = find_model_config(_IMAGE_SUMMARY_MODEL_RAW)
+    if not config:
+        LOGGER.warning(
+            "Image summary model '%s' not found in model configs; "
+            "falling back to 'gemini-2.5-flash-lite'",
+            _IMAGE_SUMMARY_MODEL_RAW,
+        )
+        config_key, config = find_model_config("gemini-2.5-flash-lite")
+        if not config:
+            LOGGER.error(
+                "Fallback model 'gemini-2.5-flash-lite' also not found in model configs"
+            )
+            return None
+
+    provider = config.get("provider", "gemini")
+    context_length = config.get("context_length", 128000)
+
+    try:
+        client = get_llm_client(config_key, provider, context_length, config)
+        _summary_client = client
+        _summary_model_key = _IMAGE_SUMMARY_MODEL_RAW
+        LOGGER.info(
+            "Image summary client created: config_key=%s, api_model=%s, provider=%s",
+            config_key,
+            config.get("model", config_key),
+            provider,
+        )
+        return client
+    except Exception:
+        LOGGER.exception("Failed to create image summary client for '%s'", _IMAGE_SUMMARY_MODEL_RAW)
+        return None
+
+
+def invalidate_summary_client() -> None:
+    """Reset the cached summary client (e.g. after API key changes)."""
+    global _summary_client, _summary_model_key
+    _summary_client = None
+    _summary_model_key = None
+    LOGGER.info("Image summary client cache invalidated")
 
 
 def ensure_image_summary(path: Path, mime_type: str) -> Optional[str]:
-    """Ensure an image summary exists; generate with Gemini if missing."""
+    """Ensure an image summary exists; generate if missing."""
     summary = get_media_summary(path)
     if summary:
         return summary
@@ -37,7 +88,7 @@ def ensure_image_summary(path: Path, mime_type: str) -> Optional[str]:
 
 
 def ensure_document_summary(path: Path) -> Optional[str]:
-    """Ensure a document summary exists; generate with Gemini if missing."""
+    """Ensure a document summary exists; generate if missing."""
     summary = get_media_summary(path)
     if summary:
         return summary
@@ -49,126 +100,73 @@ def ensure_document_summary(path: Path) -> Optional[str]:
 
 
 def _generate_image_summary(path: Path, mime_type: str) -> Optional[str]:
-    if types is None:
-        LOGGER.warning("Gemini SDK not available; cannot summarize image %s", path)
-        return None
-    try:
-        free_client, paid_client, active_client = build_gemini_clients()
-    except RuntimeError as exc:
-        LOGGER.warning("Cannot initialise Gemini client for image summary: %s", exc)
+    client = _get_summary_client()
+    if client is None:
         return None
 
-    data, effective_mime = load_image_bytes_for_llm(path, mime_type)
-    if not data or not effective_mime:
-        LOGGER.warning("Image bytes unavailable for summary generation: %s", path)
+    if not client.supports_images:
+        LOGGER.warning(
+            "Image summary model '%s' does not support images; cannot summarize %s",
+            _IMAGE_SUMMARY_MODEL_RAW,
+            path,
+        )
         return None
 
     prompt_text = (
-        "以下の画像を詳しく説明するのではなく、内容を理解するための要点を300文字以内の日本語で1〜2文にまとめてください。"
+        "以下の画像を詳しく説明するのではなく、内容を理解するための要点を"
+        "300文字以内の日本語で1〜2文にまとめてください。"
     )
-    content = [
-        types.Content(
-            parts=[
-                types.Part(text=prompt_text),
-                types.Part.from_bytes(data=data, mime_type=effective_mime),
-            ],
-            role="user",
-        )
+    messages: List[Dict[str, Any]] = [
+        {
+            "role": "user",
+            "content": prompt_text,
+            "metadata": {
+                "media": [
+                    {
+                        "path": str(path),
+                        "mime_type": mime_type,
+                        "uri": str(path),
+                    },
+                ],
+            },
+        },
     ]
-    config = types.GenerateContentConfig(
-        temperature=0.2,
-        max_output_tokens=256,
-    )
 
-    clients = [active_client, paid_client, free_client]
-    for client in clients:
-        if client is None:
-            continue
-        try:
-            response = client.models.generate_content(
-                model=IMAGE_SUMMARY_MODEL,
-                contents=content,
-                config=config,
-            )
-        except Exception as exc:  # pragma: no cover - network dependent
-            LOGGER.warning("Gemini image summary generation failed: %s", exc)
-            continue
-        text = getattr(response, "text", None)
-        if isinstance(text, str) and text.strip():
-            return text.strip()
-        # Some SDK responses place text under candidates[0].content.parts
-        try:
-            candidates = getattr(response, "candidates", [])
-            for candidate in candidates or []:
-                parts = getattr(candidate, "content", None)
-                if parts and getattr(parts, "parts", None):
-                    for part in parts.parts:
-                        value = getattr(part, "text", None)
-                        if isinstance(value, str) and value.strip():
-                            return value.strip()
-        except Exception:  # pragma: no cover - defensive
-            LOGGER.debug("Failed to parse Gemini summary response", exc_info=True)
+    try:
+        result = client.generate(messages, temperature=0.2)
+        if isinstance(result, str) and result.strip():
+            return result.strip()
+        LOGGER.warning("Image summary generation returned empty result for %s", path)
+    except Exception:
+        LOGGER.exception("Image summary generation failed for %s", path)
     return None
 
 
 def _generate_document_summary(path: Path) -> Optional[str]:
-    """Generate a summary for a text document using Gemini."""
-    if types is None:
-        LOGGER.warning("Gemini SDK not available; cannot summarize document %s", path)
-        return None
-    try:
-        free_client, paid_client, active_client = build_gemini_clients()
-    except RuntimeError as exc:
-        LOGGER.warning("Cannot initialise Gemini client for document summary: %s", exc)
+    client = _get_summary_client()
+    if client is None:
         return None
 
     try:
         document_text = path.read_text(encoding="utf-8")
     except OSError:
-        LOGGER.exception("Failed to read document for summary generation: %s", path)
+        LOGGER.exception("Failed to read document for summary: %s", path)
         return None
 
     prompt_text = (
-        "以下の文書の内容を300文字以内の日本語で要約してください。要点を簡潔にまとめてください。\n\n"
+        "以下の文書の内容を300文字以内の日本語で要約してください。"
+        "要点を簡潔にまとめてください。\n\n"
         f"{document_text}"
     )
-    content = [
-        types.Content(
-            parts=[types.Part(text=prompt_text)],
-            role="user",
-        )
+    messages: List[Dict[str, Any]] = [
+        {"role": "user", "content": prompt_text},
     ]
-    config = types.GenerateContentConfig(
-        temperature=0.2,
-        max_output_tokens=256,
-    )
 
-    clients = [active_client, paid_client, free_client]
-    for client in clients:
-        if client is None:
-            continue
-        try:
-            response = client.models.generate_content(
-                model="gemini-2.5-flash-lite",
-                contents=content,
-                config=config,
-            )
-        except Exception as exc:  # pragma: no cover - network dependent
-            LOGGER.warning("Gemini document summary generation failed: %s", exc)
-            continue
-        text = getattr(response, "text", None)
-        if isinstance(text, str) and text.strip():
-            return text.strip()
-        # Some SDK responses place text under candidates[0].content.parts
-        try:
-            candidates = getattr(response, "candidates", [])
-            for candidate in candidates or []:
-                parts = getattr(candidate, "content", None)
-                if parts and getattr(parts, "parts", None):
-                    for part in parts.parts:
-                        value = getattr(part, "text", None)
-                        if isinstance(value, str) and value.strip():
-                            return value.strip()
-        except Exception:  # pragma: no cover - defensive
-            LOGGER.debug("Failed to parse Gemini summary response", exc_info=True)
+    try:
+        result = client.generate(messages, temperature=0.2)
+        if isinstance(result, str) and result.strip():
+            return result.strip()
+        LOGGER.warning("Document summary generation returned empty result for %s", path)
+    except Exception:
+        LOGGER.exception("Document summary generation failed for %s", path)
     return None
