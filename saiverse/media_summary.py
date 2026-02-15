@@ -5,9 +5,6 @@ import os
 from pathlib import Path
 from typing import Optional
 
-# Model for image summary generation (vision-capable model required)
-IMAGE_SUMMARY_MODEL = os.getenv("SAIVERSE_IMAGE_SUMMARY_MODEL", "gemini-2.5-flash-lite")
-
 from .media_utils import (
     get_media_summary,
     load_image_bytes_for_llm,
@@ -22,6 +19,35 @@ except ImportError:  # pragma: no cover
 from llm_clients.gemini_utils import build_gemini_clients
 
 LOGGER = logging.getLogger(__name__)
+
+# The env var may contain a config key (filename stem like
+# "gemini-2.5-flash-lite-preview-09-2025-paid") or an actual API model name.
+# We resolve it lazily to the API model name via find_model_config().
+_IMAGE_SUMMARY_MODEL_RAW = os.getenv("SAIVERSE_IMAGE_SUMMARY_MODEL", "gemini-2.5-flash-lite")
+_resolved_model: str | None = None
+
+
+def _get_image_summary_model() -> str:
+    """Resolve the image summary model name to an actual Gemini API model name.
+
+    The env var value might be a config key (filename stem) that differs from
+    the API model name (e.g. "...-paid" suffix). This function resolves it once
+    and caches the result.
+    """
+    global _resolved_model
+    if _resolved_model is not None:
+        return _resolved_model
+    from saiverse.model_configs import find_model_config
+    _, config = find_model_config(_IMAGE_SUMMARY_MODEL_RAW)
+    if config:
+        _resolved_model = config.get("model", _IMAGE_SUMMARY_MODEL_RAW)
+    else:
+        _resolved_model = _IMAGE_SUMMARY_MODEL_RAW
+    LOGGER.debug(
+        "Resolved image summary model: raw='%s' -> api='%s'",
+        _IMAGE_SUMMARY_MODEL_RAW, _resolved_model,
+    )
+    return _resolved_model
 
 
 def ensure_image_summary(path: Path, mime_type: str) -> Optional[str]:
@@ -63,6 +89,7 @@ def _generate_image_summary(path: Path, mime_type: str) -> Optional[str]:
         LOGGER.warning("Image bytes unavailable for summary generation: %s", path)
         return None
 
+    model_name = _get_image_summary_model()
     prompt_text = (
         "以下の画像を詳しく説明するのではなく、内容を理解するための要点を300文字以内の日本語で1〜2文にまとめてください。"
     )
@@ -86,7 +113,7 @@ def _generate_image_summary(path: Path, mime_type: str) -> Optional[str]:
             continue
         try:
             response = client.models.generate_content(
-                model=IMAGE_SUMMARY_MODEL,
+                model=model_name,
                 contents=content,
                 config=config,
             )
@@ -128,6 +155,7 @@ def _generate_document_summary(path: Path) -> Optional[str]:
         LOGGER.exception("Failed to read document for summary generation: %s", path)
         return None
 
+    model_name = _get_image_summary_model()
     prompt_text = (
         "以下の文書の内容を300文字以内の日本語で要約してください。要点を簡潔にまとめてください。\n\n"
         f"{document_text}"
@@ -149,7 +177,7 @@ def _generate_document_summary(path: Path) -> Optional[str]:
             continue
         try:
             response = client.models.generate_content(
-                model="gemini-2.5-flash-lite",
+                model=model_name,
                 contents=content,
                 config=config,
             )
