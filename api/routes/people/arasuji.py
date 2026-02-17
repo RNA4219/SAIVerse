@@ -81,7 +81,12 @@ def _get_message_number_map(conn: sqlite3.Connection) -> dict:
     return msg_num_map
 
 @router.get("/{persona_id}/arasuji/cost-estimate", response_model=ChronicleCostEstimate)
-def estimate_chronicle_cost(persona_id: str, manager=Depends(get_manager)):
+def estimate_chronicle_cost(
+    persona_id: str,
+    batch_size: Optional[int] = None,
+    consolidation_size: Optional[int] = None,
+    manager=Depends(get_manager),
+):
     """Estimate the cost of generating Chronicle for unprocessed messages."""
     import math
     import os
@@ -102,8 +107,9 @@ def estimate_chronicle_cost(persona_id: str, manager=Depends(get_manager)):
         processed_messages = get_total_message_count(conn)
         unprocessed = max(0, total_messages - processed_messages)
 
-        batch_size = int(os.getenv("MEMORY_WEAVE_BATCH_SIZE", "20"))
-        consolidation_size = int(os.getenv("MEMORY_WEAVE_CONSOLIDATION_SIZE", "10"))
+        # Use query params if provided, otherwise fall back to env vars
+        batch_size = batch_size or int(os.getenv("MEMORY_WEAVE_BATCH_SIZE", "20"))
+        consolidation_size = consolidation_size or int(os.getenv("MEMORY_WEAVE_CONSOLIDATION_SIZE", "10"))
         model_name = os.getenv("MEMORY_WEAVE_MODEL", "gemini-2.5-flash-lite-preview-09-2025")
 
         # Estimate LLM calls
