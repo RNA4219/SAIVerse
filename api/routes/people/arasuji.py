@@ -488,19 +488,32 @@ def _run_chronicle_generation(
         
         import json
         all_rows = cur.fetchall()
-        messages = []
+
+        # Group unprocessed messages into contiguous runs.
+        # A "run" is a consecutive sequence of unprocessed messages in chronological order.
+        # This prevents mixing temporally disconnected messages into the same batch
+        # (e.g., an isolated message between two processed blocks getting merged with
+        # messages from a completely different time period).
+        runs: list[list[Message]] = []
+        current_run: list[Message] = []
+        total_unprocessed = 0
+
         for row in all_rows:
             msg_id, tid, role, content, resource_id, created_at, metadata_raw = row
-            # Skip messages already in existing Chronicles
             if msg_id in processed_ids:
+                # Hit a processed message — finalize the current run
+                if current_run:
+                    runs.append(current_run)
+                    current_run = []
                 continue
+            total_unprocessed += 1
             metadata = {}
             if metadata_raw:
                 try:
                     metadata = json.loads(metadata_raw)
                 except Exception:
                     LOGGER.warning("Failed to parse metadata JSON for message %s", msg_id, exc_info=True)
-            messages.append(Message(
+            current_run.append(Message(
                 id=msg_id,
                 thread_id=tid,
                 role=role,
@@ -509,26 +522,39 @@ def _run_chronicle_generation(
                 created_at=created_at,
                 metadata=metadata,
             ))
-            # Stop once we have enough messages
-            if len(messages) >= max_messages:
-                break
+        # Don't forget the last run
+        if current_run:
+            runs.append(current_run)
 
-        total_messages = len(messages)
-        
+        # Filter out runs smaller than batch_size (isolated messages)
+        qualifying_runs = [r for r in runs if len(r) >= batch_size]
+        total_messages = sum(len(r) for r in qualifying_runs)
+        isolated_count = total_unprocessed - total_messages
+
+        LOGGER.info(
+            f"[Chronicle Gen] {total_unprocessed} unprocessed messages in {len(runs)} runs, "
+            f"{len(qualifying_runs)} qualifying (>= {batch_size} msgs), "
+            f"{isolated_count} isolated messages skipped"
+        )
+
         # Batch minimum threshold check
-        if total_messages < batch_size:
+        if total_messages == 0:
+            reason = (
+                f"No qualifying runs (total unprocessed: {total_unprocessed}, "
+                f"batch_size: {batch_size}, runs: {[len(r) for r in runs]})"
+            )
             _update_job(
-                job_id, 
+                job_id,
                 status="completed",
                 progress=0,
-                total=total_messages,
+                total=total_unprocessed,
                 entries_created=0,
-                message=f"Not enough unprocessed messages ({total_messages} < batch_size {batch_size}). Skipping."
+                message=reason,
             )
             conn.close()
             return
 
-        LOGGER.info(f"[Chronicle Gen] Found {total_messages} messages to process")
+        LOGGER.info(f"[Chronicle Gen] Found {total_messages} messages to process in {len(qualifying_runs)} runs")
         _update_job(job_id, total=total_messages, message=f"Found {total_messages} messages to process")
 
         # Initialize LLM client
@@ -611,16 +637,26 @@ def _run_chronicle_generation(
             except ImportError as e:
                 LOGGER.warning(f"Memopedia modules not available: {e}")
 
-        # Generate
+        # Generate — process each contiguous run separately to avoid mixing
+        # temporally disconnected messages into the same batch
         _update_job(job_id, message="Generating Chronicle entries...")
-        LOGGER.info(f"[Chronicle Gen] Starting generation for {len(messages)} messages with batch_size={batch_size}")
-        
-        level1_entries, consolidated_entries = generator.generate_from_messages(
-            messages,
-            dry_run=False,
-            progress_callback=progress_callback,
-            batch_callback=batch_callback,
+        LOGGER.info(
+            f"[Chronicle Gen] Starting generation for {total_messages} messages "
+            f"in {len(qualifying_runs)} runs with batch_size={batch_size}"
         )
+
+        level1_entries = []
+        consolidated_entries = []
+        for run_idx, run in enumerate(qualifying_runs):
+            LOGGER.info(f"[Chronicle Gen] Processing run {run_idx + 1}/{len(qualifying_runs)} ({len(run)} messages)")
+            l1, cons = generator.generate_from_messages(
+                run,
+                dry_run=False,
+                progress_callback=progress_callback,
+                batch_callback=batch_callback,
+            )
+            level1_entries.extend(l1)
+            consolidated_entries.extend(cons)
 
         total_entries = len(level1_entries) + len(consolidated_entries)
 
