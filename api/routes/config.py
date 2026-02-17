@@ -667,3 +667,93 @@ def check_reembed_needed(manager=Depends(get_manager)):
                 "message": w.get("message", ""),
             }
     return {"needed": False, "persona_ids": [], "message": ""}
+
+
+# ── Playbook permissions CRUD ─────────────────────────────────────
+
+class PlaybookPermissionInfo(BaseModel):
+    playbook_name: str
+    display_name: str
+    description: str
+    permission_level: str  # blocked | user_only | ask_every_time | auto_allow
+
+
+class SetPlaybookPermissionRequest(BaseModel):
+    playbook_name: str
+    permission_level: str  # user_only | ask_every_time | auto_allow  (blocked not settable from UI)
+
+
+@router.get("/playbook-permissions")
+def get_playbook_permissions(manager=Depends(get_manager)):
+    """Return all router_callable playbooks with their current permission level for this city."""
+    from database.models import Playbook as PlaybookModel, PlaybookPermission
+
+    city_id = getattr(manager, "city_id", None)
+    if city_id is None:
+        raise HTTPException(status_code=500, detail="City ID not available")
+
+    db = manager.SessionLocal()
+    try:
+        playbooks = db.query(PlaybookModel).filter(PlaybookModel.router_callable == True).all()
+
+        permissions: dict[str, str] = {}
+        perm_rows = (
+            db.query(PlaybookPermission)
+            .filter(PlaybookPermission.CITYID == city_id)
+            .all()
+        )
+        permissions = {r.playbook_name: r.permission_level for r in perm_rows}
+
+        result = []
+        for pb in playbooks:
+            result.append(PlaybookPermissionInfo(
+                playbook_name=pb.name,
+                display_name=pb.display_name or pb.name,
+                description=pb.description or "",
+                permission_level=permissions.get(pb.name, "ask_every_time"),
+            ))
+
+        result.sort(key=lambda x: x.playbook_name)
+        return result
+    finally:
+        db.close()
+
+
+@router.post("/playbook-permissions")
+def set_playbook_permission(req: SetPlaybookPermissionRequest, manager=Depends(get_manager)):
+    """Set the permission level for a playbook in this city."""
+    from database.models import PlaybookPermission
+
+    valid_levels = ("user_only", "ask_every_time", "auto_allow")
+    if req.permission_level not in valid_levels:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid permission level. Must be one of: {valid_levels}",
+        )
+
+    city_id = getattr(manager, "city_id", None)
+    if city_id is None:
+        raise HTTPException(status_code=500, detail="City ID not available")
+
+    db = manager.SessionLocal()
+    try:
+        row = (
+            db.query(PlaybookPermission)
+            .filter(
+                PlaybookPermission.CITYID == city_id,
+                PlaybookPermission.playbook_name == req.playbook_name,
+            )
+            .first()
+        )
+        if row:
+            row.permission_level = req.permission_level
+        else:
+            db.add(PlaybookPermission(
+                CITYID=city_id,
+                playbook_name=req.playbook_name,
+                permission_level=req.permission_level,
+            ))
+        db.commit()
+        return {"success": True, "playbook_name": req.playbook_name, "permission_level": req.permission_level}
+    finally:
+        db.close()

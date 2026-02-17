@@ -606,3 +606,26 @@ def preview_context(req: PreviewRequest, manager=Depends(get_manager)):
     except Exception as e:
         logging.error("Error previewing context: %s", e, exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ── Playbook permission response ──────────────────────────────────
+
+class PermissionResponseRequest(BaseModel):
+    request_id: str
+    decision: str  # allow | deny | always_allow | never_use
+
+
+@router.post("/permission-response")
+def respond_to_permission(req: PermissionResponseRequest, manager=Depends(get_manager)):
+    """Respond to a playbook execution permission request."""
+    valid_decisions = ("allow", "deny", "always_allow", "never_use")
+    if req.decision not in valid_decisions:
+        raise HTTPException(status_code=400, detail=f"Invalid decision. Must be one of: {valid_decisions}")
+
+    event = manager._pending_permission_requests.get(req.request_id)
+    if not event:
+        raise HTTPException(status_code=404, detail="Permission request not found or expired")
+
+    manager._permission_responses[req.request_id] = req.decision
+    event.set()  # Wake up the waiting worker thread
+    return {"success": True}

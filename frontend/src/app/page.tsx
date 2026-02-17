@@ -15,6 +15,7 @@ import TutorialWizard from '@/components/tutorial/TutorialWizard';
 import SaiverseLink from '@/components/SaiverseLink';
 import ItemModal from '@/components/ItemModal';
 import ContextPreviewModal, { ContextPreviewData } from '@/components/ContextPreviewModal';
+import PlaybookPermissionDialog, { PermissionRequestData } from '@/components/PlaybookPermissionDialog';
 import ModalOverlay from '@/components/common/ModalOverlay';
 import { Send, Plus, Paperclip, Eye, X, Info, Users, Menu, Copy, Check, SlidersHorizontal, ChevronDown, AlertTriangle, ArrowUpCircle, Loader, RefreshCw } from 'lucide-react';
 import { useActivityTracker } from '@/hooks/useActivityTracker';
@@ -123,6 +124,7 @@ export default function Home() {
     const [messages, setMessages] = useState<Message[]>([]);
     const [inputValue, setInputValue] = useState('');
     const [loadingStatus, setLoadingStatus] = useState<string | null>(null);
+    const [permissionRequest, setPermissionRequest] = useState<PermissionRequestData | null>(null);
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const chatAreaRef = useRef<HTMLDivElement>(null); // Ref for the scrollable area
     const [isHistoryLoaded, setIsHistoryLoaded] = useState(false);
@@ -902,6 +904,19 @@ export default function Home() {
         setTzMismatch(null);
     };
 
+    const handlePermissionResponse = useCallback(async (requestId: string, decision: string) => {
+        setPermissionRequest(null);
+        try {
+            await fetch('/api/chat/permission-response', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ request_id: requestId, decision }),
+            });
+        } catch (e) {
+            console.error('Failed to send permission response', e);
+        }
+    }, []);
+
     const handleSendMessage = async () => {
         if ((!inputValue.trim() && attachments.length === 0) || loadingStatus) return;
         isProcessingRef.current = true;
@@ -1181,6 +1196,14 @@ export default function Home() {
                             } else if (event.status === 'completed') {
                                 setLoadingStatus('Thinking...');
                             }
+                        } else if (event.type === 'permission_request') {
+                            setPermissionRequest({
+                                requestId: event.request_id,
+                                playbookName: event.playbook_name,
+                                playbookDisplayName: event.playbook_display_name || event.playbook_name,
+                                playbookDescription: event.playbook_description || '',
+                                personaName: event.persona_name || '',
+                            });
                         } else if (event.type === 'warning') {
                             if (event.display === 'toast') {
                                 const id = `toast-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
@@ -1834,6 +1857,13 @@ export default function Home() {
                 data={contextPreviewData}
                 isLoading={contextPreviewLoading}
             />
+
+            {permissionRequest && (
+                <PlaybookPermissionDialog
+                    request={permissionRequest}
+                    onRespond={handlePermissionResponse}
+                />
+            )}
 
             {/* Initial Tutorial Wizard */}
             {tutorialChecked && (
