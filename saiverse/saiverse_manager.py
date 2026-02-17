@@ -245,6 +245,9 @@ class SAIVerseManager(
         # Pulse controller for managing concurrent playbook executions
         self.pulse_controller: PulseController = PulseController(self.sea_runtime)
 
+        # Stop event registry for user-initiated generation cancellation
+        self._active_stop_events: Dict[str, threading.Event] = {}
+
         self.runtime = RuntimeService(self, self.state)
         self.admin = AdminService(self, self.runtime, self.state)
         self.item_service = ItemService(self, self.state)
@@ -624,6 +627,40 @@ class SAIVerseManager(
             message, metadata=metadata, meta_playbook=meta_playbook,
             playbook_params=playbook_params, building_id=building_id,
         )
+
+    def cancel_active_generation(self) -> bool:
+        """Cancel the active LLM generation for personas in the user's current building.
+
+        Sends cancellation signal via CancellationToken (stops SEA playbook execution
+        and closes LLM streaming connections) and sets the stop_event (breaks the
+        per-persona loop in backend_worker).
+        """
+        building_id = self.state.user_current_building_id
+        if not building_id:
+            logging.warning("[cancel] No user_current_building_id; cannot cancel.")
+            return False
+
+        persona_ids = self.occupants.get(building_id, [])
+        cancelled = False
+
+        for pid in persona_ids:
+            req = self.pulse_controller._current.get(pid)
+            if req:
+                logging.info("[cancel] Cancelling active request for persona %s (pulse_id=%s)", pid, req.pulse_id)
+                req.cancellation_token.cancel(interrupted_by="user_stop")
+                cancelled = True
+
+        # Also set the stop_event so backend_worker breaks its persona loop
+        stop_event = self._active_stop_events.get(building_id)
+        if stop_event:
+            logging.info("[cancel] Setting stop_event for building %s", building_id)
+            stop_event.set()
+            cancelled = True
+
+        if not cancelled:
+            logging.info("[cancel] No active generation found for building %s", building_id)
+
+        return cancelled
 
     def preview_context(
         self, message: str, building_id: Optional[str] = None,

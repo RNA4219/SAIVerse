@@ -491,6 +491,13 @@ def _store_uploaded_attachment_v2(
         logging.error(f"Failed to process attachment: {e}")
         return None
 
+@router.post("/stop")
+def stop_generation(manager = Depends(get_manager)):
+    """Stop the active LLM generation for the user's current building."""
+    cancelled = manager.cancel_active_generation()
+    return {"cancelled": cancelled}
+
+
 @router.post("/send")
 def send_message(req: SendMessageRequest, manager = Depends(get_manager)):
     building_id = req.building_id or manager.user_current_building_id
