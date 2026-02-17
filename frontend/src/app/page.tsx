@@ -16,7 +16,7 @@ import SaiverseLink from '@/components/SaiverseLink';
 import ItemModal from '@/components/ItemModal';
 import ContextPreviewModal, { ContextPreviewData } from '@/components/ContextPreviewModal';
 import ModalOverlay from '@/components/common/ModalOverlay';
-import { Send, Plus, Paperclip, Eye, X, Info, Users, Menu, Copy, Check, SlidersHorizontal, ChevronDown, AlertTriangle, ArrowUpCircle, Loader, RefreshCw } from 'lucide-react';
+import { Send, Plus, Paperclip, Eye, X, Info, Users, Menu, Copy, Check, SlidersHorizontal, ChevronDown, AlertTriangle, ArrowUpCircle, Loader, RefreshCw, Square } from 'lucide-react';
 import { useActivityTracker } from '@/hooks/useActivityTracker';
 
 // Allow className on HTML elements used by thinking blocks (<details>, <div>, <summary>)
@@ -1197,6 +1197,21 @@ export default function Home() {
                                     timestamp: new Date().toISOString()
                                 }]);
                             }
+                        } else if (event.type === 'cancelled') {
+                            // Server-side cancellation: finalize streaming message
+                            setMessages(prev => {
+                                const last = prev[prev.length - 1];
+                                if (last && last._streaming) {
+                                    const { _streaming, _streamingThinking, _activities, ...rest } = last;
+                                    return [...prev.slice(0, -1), {
+                                        ...rest,
+                                        ...((_streamingThinking) && { reasoning: _streamingThinking }),
+                                        ...((_activities && _activities.length > 0) && { activity_trace: _activities }),
+                                    }];
+                                }
+                                return prev;
+                            });
+                            setLoadingStatus(null);
                         } else if (event.response) {
                             setMessages(prev => [...prev, { role: 'assistant', content: event.response }]);
                         }
@@ -1214,6 +1229,17 @@ export default function Home() {
             setLoadingStatus(null);
             await syncAfterResponse(); // Merge server state (IDs, avatars) without replacing messages
             isProcessingRef.current = false; // Allow polling AFTER sync completes
+        }
+    };
+
+    const handleStopGeneration = async () => {
+        // Signal backend to cancel active LLM generation
+        // Don't abort() the fetch — let the backend's cancellation flow
+        // send streaming_complete and cancelled events naturally.
+        try {
+            await fetch('/api/chat/stop', { method: 'POST' });
+        } catch (e) {
+            console.error('Failed to send stop request:', e);
         }
     };
 
@@ -1786,13 +1812,23 @@ export default function Home() {
                             placeholder={selectedPlaybook ? `Message (Playbook: ${selectedPlaybook})...` : "Type a message..."}
                             rows={1}
                         />
-                        <button
-                            className={styles.sendBtn}
-                            onClick={handleSendMessage}
-                            disabled={!!loadingStatus || (!inputValue.trim() && attachments.length === 0)}
-                        >
-                            <Send size={20} />
-                        </button>
+                        {loadingStatus ? (
+                            <button
+                                className={styles.stopBtn}
+                                onClick={handleStopGeneration}
+                                title="Stop generation"
+                            >
+                                <Square size={16} />
+                            </button>
+                        ) : (
+                            <button
+                                className={styles.sendBtn}
+                                onClick={handleSendMessage}
+                                disabled={!inputValue.trim() && attachments.length === 0}
+                            >
+                                <Send size={20} />
+                            </button>
+                        )}
                     </div>
                 </div>
             </main>

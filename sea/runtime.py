@@ -366,6 +366,9 @@ class SEARuntime:
         else:
             activity_trace = []
 
+        # Inherit cancellation token from parent state if not explicitly provided
+        effective_cancellation_token = cancellation_token or parent.get("_cancellation_token")
+
         initial_state = {
             "messages": list(base_messages),
             "inputs": {"input": user_input or ""},
@@ -375,7 +378,7 @@ class SEARuntime:
             "persona_obj": persona,
             "pulse_id": pulse_id,
             "pulse_type": pulse_type,  # user/schedule/auto
-            "_cancellation_token": cancellation_token,  # For node-level cancellation checks
+            "_cancellation_token": effective_cancellation_token,  # For node-level cancellation checks
             "pulse_usage_accumulator": usage_accumulator,  # Inherit from parent or create new
             "_activity_trace": activity_trace,  # Shared trace of exec/tool activities
             "_intermediate_msgs": [],  # Track intermediate node outputs for profile-based context
@@ -730,32 +733,49 @@ class SEARuntime:
                         # Streaming mode: yield chunks to UI (with retry for empty response)
                         max_stream_retries = 3
                         text = ""
+                        cancelled_during_stream = False
                         for stream_attempt in range(max_stream_retries):
                             text_chunks = []
-                            for chunk in llm_client.generate_stream(
+                            stream_iter = llm_client.generate_stream(
                                 messages,
                                 tools=[],
                                 temperature=self._default_temperature(persona),
                                 **self._get_cache_kwargs(),
-                            ):
-                                # Thinking chunks are dicts, text chunks are strings
-                                if isinstance(chunk, dict) and chunk.get("type") == "thinking":
+                            )
+                            try:
+                                for chunk in stream_iter:
+                                    # Check cancellation between chunks
+                                    if cancellation_token and cancellation_token.is_cancelled():
+                                        LOGGER.info("[sea] Streaming cancelled by user during chunk loop")
+                                        cancelled_during_stream = True
+                                        break
+
+                                    # Thinking chunks are dicts, text chunks are strings
+                                    if isinstance(chunk, dict) and chunk.get("type") == "thinking":
+                                        event_callback({
+                                            "type": "streaming_thinking",
+                                            "content": chunk["content"],
+                                            "persona_id": getattr(persona, "persona_id", None),
+                                            "node_id": getattr(node_def, "id", "llm"),
+                                        })
+                                        continue
+                                    text_chunks.append(chunk)
+                                    # Send each text chunk to UI
                                     event_callback({
-                                        "type": "streaming_thinking",
-                                        "content": chunk["content"],
+                                        "type": "streaming_chunk",
+                                        "content": chunk,
                                         "persona_id": getattr(persona, "persona_id", None),
                                         "node_id": getattr(node_def, "id", "llm"),
                                     })
-                                    continue
-                                text_chunks.append(chunk)
-                                # Send each text chunk to UI
-                                event_callback({
-                                    "type": "streaming_chunk",
-                                    "content": chunk,
-                                    "persona_id": getattr(persona, "persona_id", None),
-                                    "node_id": getattr(node_def, "id", "llm"),
-                                })
+                            finally:
+                                # Explicitly close to disconnect HTTP streaming from LLM API
+                                # This stops API-side token generation and billing
+                                if hasattr(stream_iter, 'close'):
+                                    stream_iter.close()
                             text = "".join(text_chunks)
+
+                            if cancelled_during_stream:
+                                break  # Don't retry on cancellation
 
                             # Check for empty response
                             if text.strip():
@@ -778,7 +798,7 @@ class SEARuntime:
                                 max_stream_retries
                             )
 
-                        # Record usage
+                        # Record usage (even if cancelled — tokens were consumed)
                         usage = llm_client.consume_usage()
                         LOGGER.info("[DEBUG] consume_usage returned: %s", usage)
                         llm_usage_metadata: Dict[str, Any] | None = None
