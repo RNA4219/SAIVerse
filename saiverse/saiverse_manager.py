@@ -139,6 +139,10 @@ class SAIVerseManager(
         self.state.world_items = self.world_items
         self.state.persona_pending_events = self.persona_pending_events
 
+        # --- Playbook permission request synchronisation (transient, in-memory) ---
+        self._pending_permission_requests: dict[str, threading.Event] = {}
+        self._permission_responses: dict[str, str] = {}
+
         self.personas = self.state.personas
         self.visiting_personas = self.state.visiting_personas
         self.avatar_map = self.state.avatar_map

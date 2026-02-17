@@ -292,8 +292,8 @@ class SEARuntime:
         compiled = compile_playbook(
             playbook,
             llm_node_factory=lambda node_def: self._lg_llm_node(node_def, persona, building_id, playbook, event_callback),
-            tool_node_factory=lambda node_def: self._lg_tool_node(node_def, persona, playbook, event_callback),
-            tool_call_node_factory=lambda node_def: self._lg_tool_call_node(node_def, persona, playbook, event_callback),
+            tool_node_factory=lambda node_def: self._lg_tool_node(node_def, persona, playbook, event_callback, auto_mode=auto_mode),
+            tool_call_node_factory=lambda node_def: self._lg_tool_call_node(node_def, persona, playbook, event_callback, auto_mode=auto_mode),
             speak_node=lambda state: self._lg_speak_node(state, persona, building_id, playbook, _lg_outputs, event_callback),
             think_node=lambda state: self._lg_think_node(state, persona, playbook, _lg_outputs, event_callback),
             say_node_factory=lambda node_def: self._lg_say_node(node_def, persona, building_id, playbook, _lg_outputs, event_callback),
@@ -1627,7 +1627,7 @@ class SEARuntime:
         else:
             state["selected_args"] = {"input": state.get("input")}
 
-    def _lg_tool_node(self, node_def: Any, persona: Any, playbook: PlaybookSchema, event_callback: Optional[Callable[[Dict[str, Any]], None]] = None):
+    def _lg_tool_node(self, node_def: Any, persona: Any, playbook: PlaybookSchema, event_callback: Optional[Callable[[Dict[str, Any]], None]] = None, auto_mode: bool = False):
         from tools import TOOL_REGISTRY
         from tools.context import persona_context
 
@@ -1678,11 +1678,11 @@ class SEARuntime:
 
                 # Execute tool with persona context
                 if persona_id and persona_dir:
-                    with persona_context(persona_id, persona_dir, manager_ref, playbook_name=playbook.name):
+                    with persona_context(persona_id, persona_dir, manager_ref, playbook_name=playbook.name, auto_mode=auto_mode):
                         result = tool_func(**kwargs) if callable(tool_func) else None
                 else:
                     result = tool_func(**kwargs) if callable(tool_func) else None
-                
+
                 # Log tool result
                 result_str = str(result)
                 result_preview = result_str[:200] + "..." if len(result_str) > 200 else result_str
@@ -1728,7 +1728,7 @@ class SEARuntime:
 
         return node
 
-    def _lg_tool_call_node(self, node_def: Any, persona: Any, playbook: PlaybookSchema, event_callback: Optional[Callable[[Dict[str, Any]], None]] = None):
+    def _lg_tool_call_node(self, node_def: Any, persona: Any, playbook: PlaybookSchema, event_callback: Optional[Callable[[Dict[str, Any]], None]] = None, auto_mode: bool = False):
         """Execute a tool dynamically based on an LLM node's tool call decision.
 
         Reads tool name and arguments from state (stored by an LLM node with
@@ -1792,7 +1792,7 @@ class SEARuntime:
                 LOGGER.info("[sea][tool_call] CALL %s (persona=%s) args=%s", tool_name, persona_id, tool_args)
 
                 if persona_id and persona_dir:
-                    with persona_context(persona_id, persona_dir, manager_ref, playbook_name=playbook.name):
+                    with persona_context(persona_id, persona_dir, manager_ref, playbook_name=playbook.name, auto_mode=auto_mode):
                         result = tool_func(**tool_args)
                 else:
                     result = tool_func(**tool_args)
@@ -1831,6 +1831,155 @@ class SEARuntime:
 
         return node
 
+    # ── Playbook permission helpers ──────────────────────────────────
+    def _get_playbook_permission(self, city_id: int, playbook_name: str) -> str:
+        """Return the permission level for *playbook_name* in *city_id*.
+
+        When no row exists the default is ``"ask_every_time"``.
+        """
+        from database.models import PlaybookPermission
+        try:
+            db = self.manager.SessionLocal()
+            try:
+                row = (
+                    db.query(PlaybookPermission)
+                    .filter(
+                        PlaybookPermission.CITYID == city_id,
+                        PlaybookPermission.playbook_name == playbook_name,
+                    )
+                    .first()
+                )
+                return row.permission_level if row else "ask_every_time"
+            finally:
+                db.close()
+        except Exception:
+            LOGGER.warning("[sea][perm] Failed to query permission for %s", playbook_name, exc_info=True)
+            return "ask_every_time"
+
+    def _set_playbook_permission(self, city_id: int, playbook_name: str, level: str) -> None:
+        """Insert or update the permission level for *playbook_name* in *city_id*."""
+        from database.models import PlaybookPermission
+        try:
+            db = self.manager.SessionLocal()
+            try:
+                row = (
+                    db.query(PlaybookPermission)
+                    .filter(
+                        PlaybookPermission.CITYID == city_id,
+                        PlaybookPermission.playbook_name == playbook_name,
+                    )
+                    .first()
+                )
+                if row:
+                    row.permission_level = level
+                else:
+                    db.add(PlaybookPermission(
+                        CITYID=city_id,
+                        playbook_name=playbook_name,
+                        permission_level=level,
+                    ))
+                db.commit()
+                LOGGER.info("[sea][perm] Set %s → %s (city=%s)", playbook_name, level, city_id)
+            finally:
+                db.close()
+        except Exception:
+            LOGGER.warning("[sea][perm] Failed to set permission for %s", playbook_name, exc_info=True)
+
+    def _request_playbook_permission(
+        self,
+        playbook_name: str,
+        persona: Any,
+        event_callback: Optional[Callable[[Dict[str, Any]], None]],
+    ) -> str:
+        """Send a ``permission_request`` event and block until the user responds.
+
+        Returns one of: ``"allow"``, ``"deny"``, ``"always_allow"``,
+        ``"never_use"``, or ``"timeout"``.
+        """
+        import threading as _threading
+
+        if not event_callback:
+            LOGGER.warning("[sea][perm] No event_callback — auto-denying %s", playbook_name)
+            return "deny"
+
+        request_id = str(uuid.uuid4())
+        event = _threading.Event()
+        self.manager._pending_permission_requests[request_id] = event
+
+        # Look up display name / description for the dialog
+        display_name = playbook_name
+        description = ""
+        try:
+            db = self.manager.SessionLocal()
+            try:
+                pb = db.query(PlaybookModel).filter(PlaybookModel.name == playbook_name).first()
+                if pb:
+                    display_name = pb.display_name or pb.name
+                    description = pb.description or ""
+            finally:
+                db.close()
+        except Exception:
+            LOGGER.warning("[sea][perm] Failed to look up playbook info for %s", playbook_name, exc_info=True)
+
+        persona_id = getattr(persona, "persona_id", None)
+        persona_name = getattr(persona, "persona_name", None)
+
+        event_callback({
+            "type": "permission_request",
+            "request_id": request_id,
+            "playbook_name": playbook_name,
+            "playbook_display_name": display_name,
+            "playbook_description": description,
+            "persona_id": persona_id,
+            "persona_name": persona_name,
+        })
+        LOGGER.info("[sea][perm] Sent permission_request for %s (id=%s)", playbook_name, request_id)
+
+        # Block until the user responds or timeout
+        timeout_sec = 60
+        responded = event.wait(timeout=timeout_sec)
+
+        # Cleanup
+        self.manager._pending_permission_requests.pop(request_id, None)
+        response = self.manager._permission_responses.pop(request_id, None)
+
+        if not responded or response is None:
+            LOGGER.info("[sea][perm] Permission request %s timed out after %ds", request_id, timeout_sec)
+            if event_callback:
+                event_callback({
+                    "type": "warning",
+                    "content": f"Playbook実行の許可リクエストがタイムアウトしました（{display_name}）。スキップします。",
+                    "warning_code": "permission_timeout",
+                    "display": "toast",
+                })
+            return "timeout"
+
+        LOGGER.info("[sea][perm] Permission response for %s: %s", playbook_name, response)
+        return response
+
+    def _notify_persona_permission_result(
+        self,
+        state: Dict[str, Any],
+        persona: Any,
+        playbook_name: str,
+        message: str,
+        event_callback: Optional[Callable[[Dict[str, Any]], None]],
+    ) -> None:
+        """Inform the persona about a permission denial/timeout.
+
+        Records the result in state, message history, and SAIMemory so the
+        persona can adjust its response accordingly.
+        """
+        state["last"] = message
+        self._append_tool_result_message(state, playbook_name, message)
+        if not self._store_memory(
+            persona, message,
+            role="system",
+            tags=["permission", "denied", playbook_name],
+            pulse_id=state.get("pulse_id"),
+        ):
+            LOGGER.warning("[sea][perm] Failed to store permission result to SAIMemory")
+
     def _lg_exec_node(
         self,
         node_def: Any,
@@ -1865,6 +2014,47 @@ class SEARuntime:
                 sub_input = state.get("inputs", {}).get("input")
 
             eff_bid = self._effective_building_id(persona, building_id)
+
+            # ── Playbook permission check ──
+            clean_name = str(sub_name).strip()
+            if clean_name != "basic_chat":
+                city_id = getattr(self.manager, "city_id", None)
+                if city_id is not None:
+                    perm = self._get_playbook_permission(city_id, clean_name)
+                    log_sea_trace(playbook.name, node_id, "PERM", f"{clean_name} → {perm}")
+
+                    if perm in ("blocked", "user_only"):
+                        denial_msg = f"Playbook '{clean_name}' is not available (permission: {perm})"
+                        self._notify_persona_permission_result(state, persona, clean_name, denial_msg, event_callback)
+                        return state
+
+                    if perm == "ask_every_time":
+                        if auto_mode:
+                            denial_msg = f"Playbook '{clean_name}' requires user permission but running in auto mode. Skipped."
+                            self._notify_persona_permission_result(state, persona, clean_name, denial_msg, event_callback)
+                            return state
+
+                        response = self._request_playbook_permission(clean_name, persona, event_callback)
+
+                        if response in ("deny", "timeout"):
+                            denial_msg = (
+                                f"User denied execution of playbook '{clean_name}'. Please respond without using this tool."
+                                if response == "deny"
+                                else f"Permission request for playbook '{clean_name}' timed out. Please respond without using this tool."
+                            )
+                            self._notify_persona_permission_result(state, persona, clean_name, denial_msg, event_callback)
+                            return state
+
+                        if response == "always_allow":
+                            self._set_playbook_permission(city_id, clean_name, "auto_allow")
+
+                        if response == "never_use":
+                            denial_msg = f"User disabled playbook '{clean_name}'. This playbook will not be available in future. Please respond without using this tool."
+                            self._set_playbook_permission(city_id, clean_name, "user_only")
+                            self._notify_persona_permission_result(state, persona, clean_name, denial_msg, event_callback)
+                            return state
+
+                    # perm == "auto_allow" or allowed via dialog → continue
 
             # Determine execution mode
             execution = getattr(node_def, "execution", "inline") or "inline"
