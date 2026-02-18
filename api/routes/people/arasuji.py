@@ -81,12 +81,21 @@ def _get_message_number_map(conn: sqlite3.Connection) -> dict:
     return msg_num_map
 
 @router.get("/{persona_id}/arasuji/cost-estimate", response_model=ChronicleCostEstimate)
-def estimate_chronicle_cost(persona_id: str, manager=Depends(get_manager)):
+def estimate_chronicle_cost(
+    persona_id: str,
+    batch_size: Optional[int] = None,
+    consolidation_size: Optional[int] = None,
+    manager=Depends(get_manager),
+):
     """Estimate the cost of generating Chronicle for unprocessed messages."""
     import math
     import os
     from sai_memory.memory.storage import count_messages
-    from sai_memory.arasuji.storage import get_total_message_count
+    from sai_memory.arasuji.storage import (
+        get_total_message_count,
+        count_entries_by_level,
+        get_max_level,
+    )
     from saiverse.model_configs import get_model_pricing
 
     conn = _get_arasuji_db(persona_id)
@@ -98,8 +107,9 @@ def estimate_chronicle_cost(persona_id: str, manager=Depends(get_manager)):
         processed_messages = get_total_message_count(conn)
         unprocessed = max(0, total_messages - processed_messages)
 
-        batch_size = int(os.getenv("MEMORY_WEAVE_BATCH_SIZE", "20"))
-        consolidation_size = int(os.getenv("MEMORY_WEAVE_CONSOLIDATION_SIZE", "10"))
+        # Use query params if provided, otherwise fall back to env vars
+        batch_size = batch_size or int(os.getenv("MEMORY_WEAVE_BATCH_SIZE", "20"))
+        consolidation_size = consolidation_size or int(os.getenv("MEMORY_WEAVE_CONSOLIDATION_SIZE", "10"))
         model_name = os.getenv("MEMORY_WEAVE_MODEL", "gemini-2.5-flash-lite-preview-09-2025")
 
         # Estimate LLM calls
@@ -114,7 +124,69 @@ def estimate_chronicle_cost(persona_id: str, manager=Depends(get_manager)):
 
         total_calls = level1_calls + consolidation_calls
 
-        # Estimate cost
+        # --- Estimate episode context tokens ---
+        # The reverse level promotion algorithm selects context entries from existing
+        # Chronicles. Theoretical entry count:
+        #   entries_at_max_level + (max_level - 1) * consolidation_size
+        # Capped by max_entries (20 for Level 1, 10 for consolidation).
+        current_max_level = get_max_level(conn)
+        entries_by_level = count_entries_by_level(conn)
+        existing_total = sum(entries_by_level.values())
+
+        if current_max_level > 0:
+            entries_at_max = entries_by_level.get(current_max_level, 0)
+            theoretical_existing = entries_at_max + (current_max_level - 1) * consolidation_size
+        else:
+            theoretical_existing = 0
+
+        # Project post-generation state: recalculate max_level from total Level 1 count
+        existing_lv1 = entries_by_level.get(1, 0)
+        total_lv1_after = existing_lv1 + level1_calls
+        if total_lv1_after > 0:
+            final_max_level = 1
+            temp_count = total_lv1_after
+            while temp_count >= consolidation_size:
+                final_max_level += 1
+                temp_count = math.ceil(temp_count / consolidation_size)
+            theoretical_after = temp_count + max(0, final_max_level - 1) * consolidation_size
+        else:
+            theoretical_after = 0
+
+        # Average context entries per call (start..end average, capped by max_entries)
+        MAX_ENTRIES_LV1 = 20   # generator.py:167
+        MAX_ENTRIES_CONS = 10  # generator.py:326
+        ctx_start_lv1 = min(theoretical_existing, MAX_ENTRIES_LV1)
+        ctx_end_lv1 = min(theoretical_after, MAX_ENTRIES_LV1)
+        avg_context_lv1 = (ctx_start_lv1 + ctx_end_lv1) / 2
+
+        ctx_start_cons = min(theoretical_existing + consolidation_size, MAX_ENTRIES_CONS)
+        ctx_end_cons = min(theoretical_after, MAX_ENTRIES_CONS)
+        avg_context_cons = (ctx_start_cons + ctx_end_cons) / 2
+
+        # Average tokens per context entry (from existing Chronicle content)
+        row = conn.execute("SELECT AVG(LENGTH(content)) FROM arasuji_entries").fetchone()
+        avg_content_chars = row[0] if row and row[0] else None
+        if avg_content_chars and existing_total > 0:
+            avg_entry_tokens = avg_content_chars / 3.5  # Conservative CJK/English estimate
+        else:
+            avg_entry_tokens = 50  # Default for first-time generation (~3-5 sentences)
+
+        context_tokens_lv1 = avg_context_lv1 * avg_entry_tokens
+        context_tokens_cons = avg_context_cons * avg_entry_tokens
+
+        # --- Estimate Memopedia context tokens (Level 1 only) ---
+        memopedia_tokens = 0
+        try:
+            from sai_memory.memopedia import Memopedia, init_memopedia_tables
+            init_memopedia_tables(conn)
+            memopedia = Memopedia(conn)
+            text = memopedia.get_tree_markdown(include_keywords=False, show_markers=False)
+            if text and text != "(まだページはありません)":
+                memopedia_tokens = len(text) / 3.5
+        except Exception:
+            pass  # Memopedia not initialized → 0
+
+        # --- Estimate cost ---
         pricing = get_model_pricing(model_name)
         is_free_tier = pricing is None
         estimated_cost = 0.0
@@ -122,11 +194,23 @@ def estimate_chronicle_cost(persona_id: str, manager=Depends(get_manager)):
         if pricing and total_calls > 0:
             input_rate = pricing.get("input_per_1m_tokens", 0)
             output_rate = pricing.get("output_per_1m_tokens", 0)
-            # Heuristic: ~200 tokens/message input (mixed CJK/English) + 500 tokens prompt overhead
-            avg_input_per_call = batch_size * 200 + 500
+
+            # Level 1: messages + prompt + episode context + Memopedia
+            avg_input_lv1 = (
+                batch_size * 200  # ~200 tokens/message (mixed CJK/English)
+                + 500             # prompt instructions overhead
+                + context_tokens_lv1
+                + memopedia_tokens
+            )
+            # Level 2+: arasuji text + prompt + episode context (no Memopedia)
+            avg_input_cons = (
+                consolidation_size * avg_entry_tokens  # arasuji entries as input
+                + 500                                   # prompt instructions overhead
+                + context_tokens_cons
+            )
             avg_output_per_call = 400  # ~3-5 sentence summary
 
-            total_input = total_calls * avg_input_per_call
+            total_input = level1_calls * avg_input_lv1 + consolidation_calls * avg_input_cons
             total_output = total_calls * avg_output_per_call
             estimated_cost = (
                 (total_input / 1_000_000) * input_rate

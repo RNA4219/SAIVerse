@@ -207,17 +207,34 @@ export default function ArasujiViewer({ personaId }: ArasujiViewerProps) {
     };
 
     // Chronicle Generation
-    const openGenerateModal = async () => {
-        setShowGenerateModal(true);
+    const fetchCostEstimate = useCallback(async (batchSize?: number, consolidationSize?: number) => {
         try {
-            const res = await fetch(`/api/people/${personaId}/arasuji/cost-estimate`);
+            const params = new URLSearchParams();
+            if (batchSize) params.set('batch_size', String(batchSize));
+            if (consolidationSize) params.set('consolidation_size', String(consolidationSize));
+            const qs = params.toString();
+            const res = await fetch(`/api/people/${personaId}/arasuji/cost-estimate${qs ? `?${qs}` : ''}`);
             if (res.ok) {
                 setCostEstimate(await res.json());
             }
         } catch {
             // Non-critical
         }
+    }, [personaId]);
+
+    const openGenerateModal = async () => {
+        setShowGenerateModal(true);
+        await fetchCostEstimate(generateSettings.batchSize, generateSettings.consolidationSize);
     };
+
+    // Re-fetch cost estimate when batch/consolidation size changes while modal is open
+    useEffect(() => {
+        if (!showGenerateModal) return;
+        const timer = setTimeout(() => {
+            fetchCostEstimate(generateSettings.batchSize, generateSettings.consolidationSize);
+        }, 300);  // debounce
+        return () => clearTimeout(timer);
+    }, [showGenerateModal, generateSettings.batchSize, generateSettings.consolidationSize, fetchCostEstimate]);
 
     const startGeneration = async () => {
         setShowGenerateModal(false);
