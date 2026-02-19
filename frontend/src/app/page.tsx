@@ -202,16 +202,27 @@ export default function Home() {
         const textarea = textareaRef.current;
         if (!textarea) return;
 
-        // Reset height to calculate scrollHeight correctly
-        textarea.style.height = 'auto';
-
-        // Calculate line height (approximately 1.5 * font-size of 0.95rem ≈ 22.8px)
-        const lineHeight = 24; // px, approximate
+        const lineHeight = 24; // px (1.5 * ~16px font-size)
         const maxLines = 10;
         const maxHeight = lineHeight * maxLines;
 
-        // Set new height (capped at max)
-        const newHeight = Math.min(textarea.scrollHeight, maxHeight);
+        // Temporarily override styles for accurate scrollHeight measurement
+        // - min-height: 0 prevents CSS min-height from inflating scrollHeight
+        // - overflow: hidden prevents scrollbar from affecting measurement
+        // - height: 0 collapses textarea to measure true content height
+        const prevMinHeight = textarea.style.minHeight;
+        const prevOverflow = textarea.style.overflow;
+        textarea.style.minHeight = '0';
+        textarea.style.overflow = 'hidden';
+        textarea.style.height = '0';
+
+        const scrollH = textarea.scrollHeight;
+
+        // Restore
+        textarea.style.minHeight = prevMinHeight;
+        textarea.style.overflow = prevOverflow;
+
+        const newHeight = Math.max(lineHeight, Math.min(scrollH, maxHeight));
         textarea.style.height = `${newHeight}px`;
     }, []);
 

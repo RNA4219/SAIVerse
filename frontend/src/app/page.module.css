@@ -622,12 +622,15 @@
     outline: none;
     resize: none;
     font-family: inherit;
-    font-size: 0.95rem;
+    font-size: 1rem;
+    /* >= 16px prevents iOS auto-zoom on focus */
     line-height: 1.5;
     max-height: 240px;
     /* 10 lines * 24px line-height */
     min-height: 24px;
     /* 1 line */
+    height: 24px;
+    /* Explicit initial height — JS adjustTextareaHeight overrides dynamically */
     padding: 0.2rem 0;
     overflow-y: auto;
 }
