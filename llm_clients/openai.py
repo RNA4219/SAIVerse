@@ -920,17 +920,22 @@ class OpenAIClient(LLMClient):
             return
 
         if force_tool_choice is None:
-            user_msg = next((m["content"] for m in reversed(messages)
-                             if m.get("role") == "user"), "")
-            decision = route(user_msg, tools_spec)
-            logging.info("Router decision:\n%s", json.dumps(decision, indent=2, ensure_ascii=False))
-            if decision["call"] == "yes" and decision["tool"]:
-                force_tool_choice = {
-                    "type": "function",
-                    "function": {"name": decision["tool"]}
-                }
-            else:
+            if tools is not None:
+                # Explicit tools from runtime — let LLM decide natively
                 force_tool_choice = "auto"
+            else:
+                # Legacy mode (tools=None → OPENAI_TOOLS_SPEC) — use router
+                user_msg = next((m["content"] for m in reversed(messages)
+                                 if m.get("role") == "user"), "")
+                decision = route(user_msg, tools_spec)
+                logging.info("Router decision:\n%s", json.dumps(decision, indent=2, ensure_ascii=False))
+                if decision["call"] == "yes" and decision["tool"]:
+                    force_tool_choice = {
+                        "type": "function",
+                        "function": {"name": decision["tool"]}
+                    }
+                else:
+                    force_tool_choice = "auto"
 
         resp = None
         last_tool_stream_error: Optional[Exception] = None
