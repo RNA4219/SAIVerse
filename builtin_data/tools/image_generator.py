@@ -344,6 +344,38 @@ def _log_gemini_response(resp) -> None:
                     )
 
 
+def _get_model_api_key_env(model: str) -> Optional[str]:
+    """Return the environment variable name required for a given image model.
+
+    Returns None if the model is unknown.
+    """
+    mapping = {
+        "nano_banana": "GEMINI_API_KEY",
+        "nano_banana_pro": "GEMINI_API_KEY",
+        "gpt_image_1_5": "OPENAI_API_KEY",
+        "grok_imagine": "XAI_API_KEY",
+    }
+    return mapping.get(model)
+
+
+def _is_image_model_available(model: str) -> bool:
+    """Check if the required API key for an image model is configured."""
+    env_var = _get_model_api_key_env(model)
+    if env_var is None:
+        return False
+    return bool(os.getenv(env_var))
+
+
+def get_available_image_models() -> List[str]:
+    """Return list of image model names whose API keys are configured."""
+    all_models = ["nano_banana", "nano_banana_pro", "gpt_image_1_5", "grok_imagine"]
+    return [m for m in all_models if _is_image_model_available(m)]
+
+
+# Fallback priority order (most commonly available first)
+_FALLBACK_ORDER = ["nano_banana_pro", "nano_banana", "gpt_image_1_5", "grok_imagine"]
+
+
 def generate_image(
     prompt: str,
     model: ModelType = "nano_banana_pro",
@@ -360,6 +392,7 @@ def generate_image(
             - nano_banana: Fast with aspect ratio control (Gemini 2.5 Flash)
             - nano_banana_pro: High quality with aspect ratio + resolution control (Gemini 3 Pro)
             - gpt_image_1_5: State of the art quality (OpenAI GPT Image 1.5)
+            - grok_imagine: High quality image generation (xAI Grok Imagine Pro)
         aspect_ratio: Image aspect ratio ("1:1", "16:9", "9:16", "4:3", "3:4")
         quality: Image quality level ("low", "medium", "high", "auto")
         title: Optional title for the generated image item
@@ -384,6 +417,36 @@ def generate_image(
         quality = "high"
     if not model:
         model = "nano_banana_pro"
+
+    # Check model availability and fallback if needed
+    fallback_note = ""
+    original_model = model
+    if not _is_image_model_available(model):
+        available = get_available_image_models()
+        if not available:
+            error_text = (
+                "画像生成に失敗しました。\n\n"
+                "利用可能な画像生成モデルがありません。"
+                "GEMINI_API_KEY、OPENAI_API_KEY、XAI_API_KEY のいずれかを設定してください。"
+            )
+            return error_text, ToolResult(None), None, None
+
+        # Pick the best available model from fallback order
+        fallback_model = next(
+            (m for m in _FALLBACK_ORDER if m in available),
+            available[0],
+        )
+        logger.warning(
+            "[image_generator] Model %s unavailable (missing %s), "
+            "falling back to %s",
+            model, _get_model_api_key_env(model), fallback_model,
+        )
+        model = fallback_model
+        fallback_note = (
+            f"\n\n※ 指定されたモデル「{original_model}」のAPIキー"
+            f"（{_get_model_api_key_env(original_model)}）が未設定のため、"
+            f"「{model}」で生成しました。"
+        )
 
     # Get context for resolving URIs
     persona_id = get_active_persona_id()
@@ -468,6 +531,7 @@ def generate_image(
         f"モデル: {model}\n"
         f"プロンプト:\n{prompt}"
         f"{item_text}"
+        f"{fallback_note}"
     )
 
     return text, ToolResult(snippet), stored_path.as_posix(), metadata
