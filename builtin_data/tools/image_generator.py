@@ -114,7 +114,10 @@ def _generate_with_nano_banana(
             response_modalities=["TEXT", "IMAGE"],
             image_config=types.ImageConfig(
                 aspect_ratio=aspect_ratio
-            )
+            ),
+            http_options=types.HttpOptions(
+                retry_options=types.HttpRetryOptions(attempts=1),
+            ),
         )
     )
 
@@ -165,7 +168,10 @@ def _generate_with_nano_banana_pro(
             image_config=types.ImageConfig(
                 aspect_ratio=aspect_ratio,
                 image_size=resolution
-            )
+            ),
+            http_options=types.HttpOptions(
+                retry_options=types.HttpRetryOptions(attempts=1),
+            ),
         )
     )
 
@@ -460,39 +466,69 @@ def generate_image(
     # Resolve input image URIs
     input_image_paths = _resolve_input_images(input_images, persona_id, building_id)
 
-    logger.info(
-        f"[image_generator] Starting generation: model={model}, "
-        f"aspect_ratio={aspect_ratio}, quality={quality}, "
-        f"input_images={len(input_image_paths)}"
-    )
+    # Build fallback chain: requested model first, then others in priority order
+    fallback_chain = [model]
+    for m in _FALLBACK_ORDER:
+        if m != model and _is_image_model_available(m):
+            fallback_chain.append(m)
 
-    try:
-        if model == "nano_banana":
-            image_data, mime = _generate_with_nano_banana(
-                prompt, aspect_ratio, input_image_paths
-            )
-        elif model == "nano_banana_pro":
-            image_data, mime = _generate_with_nano_banana_pro(
-                prompt, aspect_ratio, quality, input_image_paths
-            )
-        elif model == "gpt_image_1_5":
-            image_data, mime = _generate_with_gpt_image(
-                prompt, aspect_ratio, quality, input_image_paths
-            )
-        elif model == "grok_imagine":
-            image_data, mime = _generate_with_grok_imagine(
-                prompt, aspect_ratio, quality, input_image_paths
-            )
-        else:
-            raise ValueError(f"Unknown model: {model}")
+    image_data: bytes | None = None
+    mime: str = "image/png"
+    last_error: Exception | None = None
 
-    except Exception as exc:
-        logger.exception(f"[image_generator] Generation failed: {exc}")
+    for attempt_model in fallback_chain:
+        logger.info(
+            f"[image_generator] Trying model={attempt_model}, "
+            f"aspect_ratio={aspect_ratio}, quality={quality}, "
+            f"input_images={len(input_image_paths)}"
+        )
+        try:
+            if attempt_model == "nano_banana":
+                image_data, mime = _generate_with_nano_banana(
+                    prompt, aspect_ratio, input_image_paths
+                )
+            elif attempt_model == "nano_banana_pro":
+                image_data, mime = _generate_with_nano_banana_pro(
+                    prompt, aspect_ratio, quality, input_image_paths
+                )
+            elif attempt_model == "gpt_image_1_5":
+                image_data, mime = _generate_with_gpt_image(
+                    prompt, aspect_ratio, quality, input_image_paths
+                )
+            elif attempt_model == "grok_imagine":
+                image_data, mime = _generate_with_grok_imagine(
+                    prompt, aspect_ratio, quality, input_image_paths
+                )
+            else:
+                logger.warning(f"[image_generator] Unknown model: {attempt_model}, skipping")
+                continue
+
+            # Success — record if we fell back
+            if attempt_model != model:
+                fallback_note = (
+                    f"\n\n※ モデル「{model}」でサーバーエラーが発生したため、"
+                    f"「{attempt_model}」で生成しました。"
+                )
+            model = attempt_model
+            break
+
+        except Exception as exc:
+            last_error = exc
+            remaining = [m for m in fallback_chain if m != attempt_model and fallback_chain.index(m) > fallback_chain.index(attempt_model)]
+            if remaining:
+                logger.warning(
+                    f"[image_generator] Model {attempt_model} failed: {exc}. "
+                    f"Falling back to next model: {remaining[0]}"
+                )
+            else:
+                logger.exception(f"[image_generator] Generation failed on all models. Last error: {exc}")
+
+    if image_data is None:
         error_text = (
             f"画像生成に失敗しました。\n\n"
-            f"モデル: {model}\n"
+            f"試行したモデル: {', '.join(fallback_chain)}\n"
             f"プロンプト:\n{prompt}\n\n"
-            f"エラー: {exc}"
+            f"エラー: {last_error}"
         )
         return error_text, ToolResult(None), None, None
 

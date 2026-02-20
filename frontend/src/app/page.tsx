@@ -1077,6 +1077,16 @@ export default function Home() {
                                 }
                             });
                             setLoadingStatus('Streaming...');
+                        } else if (event.type === 'streaming_discard') {
+                            // Tool call detected after streaming — discard streamed text
+                            setMessages(prev => {
+                                const last = prev[prev.length - 1];
+                                if (last && last._streaming) {
+                                    return prev.slice(0, -1);
+                                }
+                                return prev;
+                            });
+                            setLoadingStatus('Thinking...');
                         } else if (event.type === 'streaming_complete') {
                             // Extract images from metadata if present (e.g., from image generation)
                             let streamCompleteImages: MessageImage[] | undefined;
@@ -1262,6 +1272,26 @@ export default function Home() {
             setMessages(prev => [...prev, { role: 'assistant', content: "Error: Failed to send message." }]);
         } finally {
             setLoadingStatus(null);
+            // Finalize any orphaned _streaming messages left after the stream ends
+            // (e.g. activity events that arrived after the last streaming_complete)
+            setMessages(prev => {
+                const lastIdx = prev.length - 1;
+                if (lastIdx >= 0 && prev[lastIdx]._streaming) {
+                    const msg = prev[lastIdx];
+                    const { _streaming, _streamingThinking, _activities, ...rest } = msg;
+                    // Empty content + no activities → discard entirely
+                    if (!rest.content && (!_activities || _activities.length === 0)) {
+                        return prev.slice(0, -1);
+                    }
+                    // Has activities or content → finalize as completed message
+                    return [...prev.slice(0, -1), {
+                        ...rest,
+                        ...(_streamingThinking && { reasoning: _streamingThinking }),
+                        ...((_activities && _activities.length > 0) && { activity_trace: _activities }),
+                    }];
+                }
+                return prev;
+            });
             await syncAfterResponse(); // Merge server state (IDs, avatars) without replacing messages
             isProcessingRef.current = false; // Allow polling AFTER sync completes
         }

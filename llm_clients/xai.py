@@ -517,12 +517,17 @@ class XAIClient(LLMClient):
 
             # --- Tool-aware streaming ---
             if force_tool_choice is None:
-                user_msg = next(
-                    (m["content"] for m in reversed(messages) if m.get("role") == "user"),
-                    "",
-                )
-                decision = route(user_msg, tools_spec)
-                _log.info("Router decision:\n%s", json.dumps(decision, indent=2, ensure_ascii=False))
+                if tools is not None:
+                    # Explicit tools from runtime — let LLM decide natively
+                    pass
+                else:
+                    # Legacy mode (tools=None → OPENAI_TOOLS_SPEC) — use router
+                    user_msg = next(
+                        (m["content"] for m in reversed(messages) if m.get("role") == "user"),
+                        "",
+                    )
+                    decision = route(user_msg, tools_spec)
+                    _log.info("Router decision:\n%s", json.dumps(decision, indent=2, ensure_ascii=False))
 
             chat = self._create_chat(tools_spec=tools_spec)
             for msg in xai_messages:

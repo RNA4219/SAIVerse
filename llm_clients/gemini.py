@@ -581,11 +581,50 @@ class GeminiClient(LLMClient):
                 system_lines.append(message.get("content", "") or "")
                 continue
 
+            # Handle assistant messages with tool_calls (function calling protocol)
             if "tool_calls" in message:
-                for fn_call in message["tool_calls"]:
-                    contents.append(
-                        types.Content(role="model", parts=[types.Part(function_call=fn_call)])
+                parts: List[types.Part] = []
+                # Include text content if present (for "both" type responses)
+                msg_text = content_to_text(message.get("content", "")) or ""
+                if msg_text:
+                    parts.append(types.Part(text=msg_text))
+                for tc in message["tool_calls"]:
+                    fn = tc.get("function", {}) if isinstance(tc, dict) else {}
+                    fn_name = fn.get("name", "")
+                    fn_args_raw = fn.get("arguments", "{}")
+                    fn_args = json.loads(fn_args_raw) if isinstance(fn_args_raw, str) else fn_args_raw
+                    fc_part = types.Part(
+                        function_call=types.FunctionCall(name=fn_name, args=fn_args)
                     )
+                    # Gemini thinking models require thought_signature echoed back
+                    _ts = tc.get("thought_signature") if isinstance(tc, dict) else None
+                    if _ts:
+                        fc_part.thought_signature = _ts
+                    parts.append(fc_part)
+                if parts:
+                    contents.append(types.Content(role="model", parts=parts))
+                continue
+
+            # Handle tool result messages (function response)
+            if role == "tool":
+                fn_name = message.get("name", "")
+                fn_content = message.get("content", "")
+                # Wrap content as a dict for FunctionResponse.response
+                try:
+                    response_data = json.loads(fn_content) if isinstance(fn_content, str) else fn_content
+                except (json.JSONDecodeError, TypeError):
+                    response_data = {"result": fn_content}
+                if not isinstance(response_data, dict):
+                    response_data = {"result": response_data}
+                contents.append(types.Content(
+                    role="user",
+                    parts=[types.Part(
+                        function_response=types.FunctionResponse(
+                            name=fn_name,
+                            response=response_data,
+                        )
+                    )]
+                ))
                 continue
 
             text = content_to_text(message.get("content", "")) or ""
@@ -931,10 +970,14 @@ class GeminiClient(LLMClient):
                 reasoning_entries = []
                 function_call_part = None
 
+                _sync_thought_sig: Optional[str] = None
                 for part in candidate.content.parts:
                     part_fcall = getattr(part, "function_call", None)
                     if part_fcall:
                         function_call_part = part_fcall
+                        _ts = getattr(part, "thought_signature", None)
+                        if _ts:
+                            _sync_thought_sig = _ts
                         continue
                     
                     is_thought = is_truthy_flag(getattr(part, "thought", None))
@@ -957,25 +1000,21 @@ class GeminiClient(LLMClient):
                 if function_call_part:
                     fcall_name = getattr(function_call_part, "name", None)
                     fcall_args = getattr(function_call_part, "args", {}) or {}
-                    
+                    _fc_base: Dict[str, Any] = {
+                        "tool_name": fcall_name,
+                        "tool_args": dict(fcall_args),
+                        "raw_function_call": function_call_part,
+                    }
+                    if _sync_thought_sig:
+                        _fc_base["thought_signature"] = _sync_thought_sig
+
                     if fcall_name and isinstance(fcall_name, str):
                         if text:
                             logging.info("[gemini] Returning both: text + tool_call (%s)", fcall_name)
-                            return {
-                                "type": "both",
-                                "content": text,
-                                "tool_name": fcall_name,
-                                "tool_args": dict(fcall_args),
-                                "raw_function_call": function_call_part,
-                            }
+                            return {"type": "both", "content": text, **_fc_base}
                         else:
                             logging.info("[gemini] Returning tool_call: %s", fcall_name)
-                            return {
-                                "type": "tool_call",
-                                "tool_name": fcall_name,
-                                "tool_args": dict(fcall_args),
-                                "raw_function_call": function_call_part,
-                            }
+                            return {"type": "tool_call", **_fc_base}
 
                 # Text-only response in tool mode
                 # Check for empty text response (no tool call and empty/whitespace-only text)
@@ -1098,21 +1137,28 @@ class GeminiClient(LLMClient):
         reasoning_chunks: List[str] = []
 
         if use_tools:
-            decision = route(self._last_user(messages), tools_spec)
-            logging.info(
-                "Router decision:\n%s",
-                json.dumps(decision, indent=2, ensure_ascii=False),
-            )
-            tool_cfg = types.ToolConfig(
-                functionCallingConfig=(
-                    types.FunctionCallingConfig(
-                        mode="ANY",
-                        allowedFunctionNames=[decision["tool"]],
-                    )
-                    if decision["call"] == "yes"
-                    else types.FunctionCallingConfig(mode="AUTO")
+            if tools is not None:
+                # Explicit tools from runtime — let LLM decide natively (AUTO)
+                tool_cfg = types.ToolConfig(
+                    functionCallingConfig=types.FunctionCallingConfig(mode="AUTO")
                 )
-            )
+            else:
+                # Legacy mode (tools=None → GEMINI_TOOLS_SPEC) — use router
+                decision = route(self._last_user(messages), tools_spec)
+                logging.info(
+                    "Router decision:\n%s",
+                    json.dumps(decision, indent=2, ensure_ascii=False),
+                )
+                tool_cfg = types.ToolConfig(
+                    functionCallingConfig=(
+                        types.FunctionCallingConfig(
+                            mode="ANY",
+                            allowedFunctionNames=[decision["tool"]],
+                        )
+                        if decision["call"] == "yes"
+                        else types.FunctionCallingConfig(mode="AUTO")
+                    )
+                )
         else:
             tool_cfg = None
 
@@ -1131,6 +1177,7 @@ class GeminiClient(LLMClient):
                 raise self._convert_to_llm_error(exc, "streaming")
 
         fcall: Optional[types.FunctionCall] = None
+        fcall_thought_signature: Optional[str] = None
         prefix_yielded = False
         seen_stream_texts: Dict[int, str] = {}
         thought_seen: Dict[int, str] = {}
@@ -1173,6 +1220,10 @@ class GeminiClient(LLMClient):
                 if getattr(part, "function_call", None) and fcall is None:
                     get_llm_logger().debug("Gemini function_call (part %s): %s", part_idx, part.function_call)
                     fcall = part.function_call
+                    # Capture thought_signature for thinking-enabled models (required by Gemini API)
+                    _ts = getattr(part, "thought_signature", None)
+                    if _ts:
+                        fcall_thought_signature = _ts
                 elif is_truthy_flag(getattr(part, "thought", None)):
                     text_val = getattr(part, "text", None) or ""
                     if text_val:
@@ -1209,7 +1260,7 @@ class GeminiClient(LLMClient):
                 yield "\n".join(history_snippets) + "\n"
                 prefix_yielded = True
             yield new_text
-            seen_stream_texts[candidate_index] = combined_text
+            seen_stream_texts[candidate_index] = previous_text + new_text
             finish_reason = getattr(candidate, "finish_reason", None)
             if finish_reason:
                 stream_completed = True
@@ -1247,20 +1298,23 @@ class GeminiClient(LLMClient):
             fcall_name = getattr(fcall, "name", None)
             fcall_args = getattr(fcall, "args", {}) or {}
 
+            _td_base = {
+                "tool_name": fcall_name,
+                "tool_args": dict(fcall_args),
+                "raw_function_call": fcall,
+            }
+            if fcall_thought_signature:
+                _td_base["thought_signature"] = fcall_thought_signature
             if all_text.strip():
                 self._store_tool_detection({
                     "type": "both",
                     "content": all_text,
-                    "tool_name": fcall_name,
-                    "tool_args": dict(fcall_args),
-                    "raw_function_call": fcall,
+                    **_td_base,
                 })
             else:
                 self._store_tool_detection({
                     "type": "tool_call",
-                    "tool_name": fcall_name,
-                    "tool_args": dict(fcall_args),
-                    "raw_function_call": fcall,
+                    **_td_base,
                 })
             logging.info("[gemini] Tool detection stored: %s", fcall_name)
         else:
