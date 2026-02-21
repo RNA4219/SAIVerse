@@ -160,6 +160,25 @@ export default function ArasujiViewer({ personaId }: ArasujiViewerProps) {
         }
     };
 
+    // Delete a message from the error batch (for removing problematic messages)
+    const deleteErrorBatchMessage = async (messageId: string) => {
+        if (!confirm("このメッセージを削除しますか？この操作は元に戻せません。")) return;
+        try {
+            const res = await fetch(`/api/people/${personaId}/messages/${messageId}`, {
+                method: 'DELETE',
+            });
+            if (res.ok) {
+                setErrorBatchMessages(prev => prev.filter(m => m.id !== messageId));
+            } else {
+                const err = await res.json().catch(() => ({}));
+                alert(`削除に失敗しました: ${err.detail || 'Unknown error'}`);
+            }
+        } catch (e) {
+            console.error("Failed to delete message", e);
+            alert('メッセージの削除中にエラーが発生しました');
+        }
+    };
+
     // Load source messages when a level-1 entry is selected
     useEffect(() => {
         if (selectedEntry && selectedEntry.level === 1 && selectedEntry.source_ids.length > 0) {
@@ -545,6 +564,19 @@ export default function ArasujiViewer({ personaId }: ArasujiViewerProps) {
                                                             <span className={styles.sourceMessageTime}>
                                                                 {new Date(msg.created_at * 1000).toLocaleString()}
                                                             </span>
+                                                            <button
+                                                                onClick={() => deleteErrorBatchMessage(msg.id)}
+                                                                title="このメッセージを削除"
+                                                                style={{
+                                                                    background: 'none', border: 'none', cursor: 'pointer',
+                                                                    opacity: 0.5, padding: '2px', marginLeft: 'auto',
+                                                                    color: 'inherit', display: 'flex', alignItems: 'center',
+                                                                }}
+                                                                onMouseEnter={e => (e.currentTarget.style.opacity = '1')}
+                                                                onMouseLeave={e => (e.currentTarget.style.opacity = '0.5')}
+                                                            >
+                                                                <Trash2 size={13} />
+                                                            </button>
                                                         </div>
                                                         <div className={styles.sourceMessageContent}>
                                                             {msg.content}
