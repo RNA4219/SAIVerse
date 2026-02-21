@@ -75,7 +75,10 @@ export default function ArasujiViewer({ personaId }: ArasujiViewerProps) {
         error: string | null;
         error_code: string | null;
         error_detail: string | null;
+        error_meta: { message_ids: string[]; start_time: number; end_time: number } | null;
     } | null>(null);
+    const [errorBatchMessages, setErrorBatchMessages] = useState<SourceMessage[]>([]);
+    const [isLoadingErrorBatch, setIsLoadingErrorBatch] = useState(false);
     const pollingRef = useRef<NodeJS.Timeout | null>(null);
 
     useEffect(() => {
@@ -134,6 +137,26 @@ export default function ArasujiViewer({ personaId }: ArasujiViewerProps) {
             console.error("Failed to fetch source messages", e);
         } finally {
             setIsLoadingMessages(false);
+        }
+    };
+
+    // Fetch batch messages for error investigation
+    const fetchErrorBatchMessages = async (messageIds: string[]) => {
+        setIsLoadingErrorBatch(true);
+        try {
+            const res = await fetch(`/api/people/${personaId}/arasuji/messages-by-ids`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ ids: messageIds }),
+            });
+            if (res.ok) {
+                const data = await res.json();
+                setErrorBatchMessages(data);
+            }
+        } catch (e) {
+            console.error("Failed to fetch error batch messages", e);
+        } finally {
+            setIsLoadingErrorBatch(false);
         }
     };
 
@@ -263,7 +286,9 @@ export default function ArasujiViewer({ personaId }: ArasujiViewerProps) {
                     error: null,
                     error_code: null,
                     error_detail: null,
+                    error_meta: null,
                 });
+                setErrorBatchMessages([]);
                 startPolling(data.job_id);
             } else {
                 const err = await res.json();
@@ -292,6 +317,7 @@ export default function ArasujiViewer({ personaId }: ArasujiViewerProps) {
                         error: data.error,
                         error_code: data.error_code || null,
                         error_detail: data.error_detail || null,
+                        error_meta: data.error_meta || null,
                     });
                     if (data.status === 'completed' || data.status === 'failed' || data.status === 'cancelled') {
                         if (pollingRef.current) clearInterval(pollingRef.current);
@@ -467,7 +493,7 @@ export default function ArasujiViewer({ personaId }: ArasujiViewerProps) {
                     };
                     const guidanceMap: Record<string, string> = {
                         empty_response: 'しばらく時間を置いてから再実行してください。繰り返し発生する場合は、サーバーの障害情報を確認してください。',
-                        safety_filter: '該当メッセージに不適切と判定された内容が含まれている可能性があります。メッセージの内容を確認し、必要に応じて修正・削除してから再実行してください。',
+                        safety_filter: '該当メッセージに不適切と判定された内容が含まれている可能性があります。特に画像生成プロンプト（少年・少女関連など）が含まれる場合、健全な内容でもブロックされることがあります。下の「該当メッセージを表示」で内容を確認し、必要に応じて修正・削除してから再実行してください。',
                         timeout: 'サーバーが混雑している可能性があります。しばらく時間を置いてから再実行してください。',
                         rate_limit: 'API利用制限に達しています。しばらく時間を置いてから再実行してください。',
                         payment: 'APIキーの残高や支払い設定を確認してください。',
@@ -476,6 +502,7 @@ export default function ArasujiViewer({ personaId }: ArasujiViewerProps) {
                     };
                     const icon = (code && iconMap[code]) || '❌';
                     const guidance = (code && guidanceMap[code]) || '予期しないエラーが発生しました。Technical Detailsを確認し、問題が続く場合は管理者に連絡してください。';
+                    const meta = generationJob.error_meta;
                     return (
                         <div className={styles.generationError}>
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', flex: 1 }}>
@@ -486,6 +513,50 @@ export default function ArasujiViewer({ personaId }: ArasujiViewerProps) {
                                 <span style={{ fontSize: '0.85em', opacity: 0.75, lineHeight: 1.4 }}>
                                     {guidance}
                                 </span>
+                                {meta && meta.message_ids && meta.message_ids.length > 0 && (
+                                    <details style={{ fontSize: '0.85em', marginTop: '2px' }}
+                                        onToggle={(e) => {
+                                            if ((e.target as HTMLDetailsElement).open && errorBatchMessages.length === 0 && !isLoadingErrorBatch) {
+                                                fetchErrorBatchMessages(meta.message_ids);
+                                            }
+                                        }}
+                                    >
+                                        <summary style={{ cursor: 'pointer', opacity: 0.8, fontWeight: 500 }}>
+                                            該当メッセージを表示
+                                            {meta.start_time && meta.end_time && (
+                                                <span style={{ fontWeight: 400, opacity: 0.7, marginLeft: '8px' }}>
+                                                    ({new Date(meta.start_time * 1000).toLocaleDateString()} ~ {new Date(meta.end_time * 1000).toLocaleDateString()})
+                                                </span>
+                                            )}
+                                        </summary>
+                                        <div style={{ marginTop: '6px', maxHeight: '300px', overflowY: 'auto' }}>
+                                            {isLoadingErrorBatch ? (
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', padding: '8px 0' }}>
+                                                    <Loader2 className={styles.loader} size={14} />
+                                                    <span>メッセージを読み込み中...</span>
+                                                </div>
+                                            ) : errorBatchMessages.length > 0 ? (
+                                                errorBatchMessages.map(msg => (
+                                                    <div key={msg.id} className={styles.sourceMessageItem}>
+                                                        <div className={styles.sourceMessageHeader}>
+                                                            <span className={`${styles.sourceMessageRole} ${styles[msg.role.toLowerCase()] || ''}`}>
+                                                                {msg.role === 'model' ? 'assistant' : msg.role}
+                                                            </span>
+                                                            <span className={styles.sourceMessageTime}>
+                                                                {new Date(msg.created_at * 1000).toLocaleString()}
+                                                            </span>
+                                                        </div>
+                                                        <div className={styles.sourceMessageContent}>
+                                                            {msg.content}
+                                                        </div>
+                                                    </div>
+                                                ))
+                                            ) : (
+                                                <span style={{ opacity: 0.6 }}>メッセージが見つかりませんでした</span>
+                                            )}
+                                        </div>
+                                    </details>
+                                )}
                                 {generationJob.error_detail && (
                                     <details style={{ fontSize: '0.85em', marginTop: '2px' }}>
                                         <summary style={{ cursor: 'pointer', opacity: 0.7 }}>Technical Details</summary>
@@ -493,7 +564,7 @@ export default function ArasujiViewer({ personaId }: ArasujiViewerProps) {
                                     </details>
                                 )}
                             </div>
-                            <button onClick={() => setGenerationJob(null)}>×</button>
+                            <button onClick={() => { setGenerationJob(null); setErrorBatchMessages([]); }}>×</button>
                         </div>
                     );
                 })()}

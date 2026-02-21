@@ -921,6 +921,12 @@ class ArasujiGenerator:
                 e.user_message = (
                     f"メッセージ {i+1}〜{i+len(batch)} の処理中: {e.user_message}"
                 )
+                # Attach batch metadata for frontend navigation
+                e.batch_meta = {
+                    "message_ids": [m.id for m in batch],
+                    "start_time": min(m.created_at for m in batch),
+                    "end_time": max(m.created_at for m in batch),
+                }
                 raise
             if not entry:
                 raise RuntimeError(
