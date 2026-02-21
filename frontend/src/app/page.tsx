@@ -1621,31 +1621,24 @@ export default function Home() {
                                             ))}
                                         </div>
                                     )}
-                                    {msg.isError ? (() => {
-                                        const guidanceMap: Record<string, string> = {
-                                            empty_response: 'しばらく時間を置いてから再送信してください。繰り返し発生する場合は、サーバーの障害情報を確認してください。',
-                                            safety_filter: '送信した内容が安全性フィルターに該当した可能性があります。内容を変更して再送信してください。',
-                                            timeout: 'サーバーが混雑している可能性があります。しばらく時間を置いてから再送信してください。',
-                                            rate_limit: 'API利用制限に達しています。しばらく時間を置いてから再送信してください。',
-                                            payment: 'APIキーの残高や支払い設定を確認してください。',
-                                            authentication: 'APIキーの設定を確認してください。',
-                                            server_error: 'LLMサーバーで障害が発生しています。しばらく時間を置いてから再送信してください。',
-                                        };
-                                        const iconMap: Record<string, string> = {
-                                            rate_limit: '⏱️', timeout: '⏰', safety_filter: '🛡️',
-                                            server_error: '🔧', empty_response: '📭',
-                                            authentication: '🔑', payment: '💳',
-                                        };
-                                        const icon = (msg.errorCode && iconMap[msg.errorCode]) || '⚠️';
-                                        const guidance = (msg.errorCode && guidanceMap[msg.errorCode]) || '予期しないエラーが発生しました。問題が続く場合は管理者に連絡してください。';
-                                        return (
+                                    {msg.isError ? (
                                         <div className={styles.errorContent}>
                                             <div className={styles.errorHeader}>
-                                                <span className={styles.errorIcon}>{icon}</span>
+                                                <span className={styles.errorIcon}>
+                                                    {({rate_limit: '⏱️', timeout: '⏰', safety_filter: '🛡️', server_error: '🔧', empty_response: '📭', authentication: '🔑', payment: '💳'} as Record<string, string>)[msg.errorCode || ''] || '⚠️'}
+                                                </span>
                                                 <span className={styles.errorMessage}>{msg.content}</span>
                                             </div>
                                             <div style={{ fontSize: '0.85em', opacity: 0.75, lineHeight: 1.4, marginTop: '4px' }}>
-                                                {guidance}
+                                                {({
+                                                    empty_response: 'しばらく時間を置いてから再送信してください。繰り返し発生する場合は、サーバーの障害情報を確認してください。',
+                                                    safety_filter: '送信した内容が安全性フィルターに該当した可能性があります。内容を変更して再送信してください。',
+                                                    timeout: 'サーバーが混雑している可能性があります。しばらく時間を置いてから再送信してください。',
+                                                    rate_limit: 'API利用制限に達しています。しばらく時間を置いてから再送信してください。',
+                                                    payment: 'APIキーの残高や支払い設定を確認してください。',
+                                                    authentication: 'APIキーの設定を確認してください。',
+                                                    server_error: 'LLMサーバーで障害が発生しています。しばらく時間を置いてから再送信してください。',
+                                                } as Record<string, string>)[msg.errorCode || ''] || '予期しないエラーが発生しました。問題が続く場合は管理者に連絡してください。'}
                                             </div>
                                             {msg.errorDetail && (
                                                 <details className={styles.errorDetails}>
@@ -1653,8 +1646,7 @@ export default function Home() {
                                                     <pre>{msg.errorDetail}</pre>
                                                 </details>
                                             )}
-                                        </div>);
-                                    })()
+                                        </div>
                                     ) : msg.isWarning ? (
                                         <div className={styles.warningContent}>
                                             <span className={styles.warningMessage}>{msg.content}</span>
