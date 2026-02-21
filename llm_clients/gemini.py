@@ -837,6 +837,7 @@ class GeminiClient(LLMClient):
                     last_chunk = None
                     last_finish_reason = None
                     last_safety_ratings = None
+                    prompt_block_reason = None
 
                     for chunk in stream:
                         last_chunk = chunk
@@ -848,6 +849,13 @@ class GeminiClient(LLMClient):
                         last_chunk_time = now
                         saw_any_chunk = True
                         get_llm_logger().debug("Gemini stream chunk:\n%s", chunk)
+
+                        # Check prompt-level block (PROHIBITED_CONTENT etc.)
+                        pf = getattr(chunk, "prompt_feedback", None)
+                        if pf:
+                            br = getattr(pf, "block_reason", None)
+                            if br is not None:
+                                prompt_block_reason = br
 
                         if chunk.candidates:
                             candidate = chunk.candidates[0]
@@ -862,12 +870,35 @@ class GeminiClient(LLMClient):
 
                     if not saw_any_chunk:
                         raise EmptyResponseError("No chunks received from stream")
+
+                    # Prompt-level block: input rejected before generation
+                    if prompt_block_reason:
+                        block_str = str(prompt_block_reason)
+                        _block_usage = getattr(last_chunk, "usage_metadata", None) if last_chunk else None
+                        logging.warning(
+                            "[gemini] Prompt blocked: block_reason=%s, prompt_tokens=%s",
+                            block_str,
+                            getattr(_block_usage, "prompt_token_count", None) if _block_usage else None,
+                        )
+                        raise SafetyFilterError(
+                            f"Prompt blocked by Gemini: {block_str}",
+                            user_message=(
+                                f"入力内容がGeminiの安全性フィルターによりブロックされました（{block_str}）。"
+                                "該当メッセージの内容を確認してください。"
+                            ),
+                        )
+
                     if not all_parts:
+                        # Log usage even for empty responses (did tokens get consumed?)
+                        _empty_usage = getattr(last_chunk, "usage_metadata", None) if last_chunk else None
                         logging.warning(
                             "[gemini] Stream had chunks but no content parts. "
-                            "finish_reason=%s, safety_ratings=%s",
+                            "finish_reason=%s, safety_ratings=%s, "
+                            "prompt_tokens=%s, total_tokens=%s",
                             last_finish_reason,
                             [str(r) for r in (last_safety_ratings or [])],
+                            getattr(_empty_usage, "prompt_token_count", None) if _empty_usage else None,
+                            getattr(_empty_usage, "total_token_count", None) if _empty_usage else None,
                         )
                         if last_finish_reason and "SAFETY" in str(last_finish_reason).upper():
                             blocked = [
@@ -964,6 +995,25 @@ class GeminiClient(LLMClient):
                         output_tokens=getattr(usage, "candidates_token_count", 0) or 0,
                         cached_tokens=cached,
                     )
+
+                # Check prompt-level block (PROHIBITED_CONTENT etc.)
+                pf = getattr(resp, "prompt_feedback", None)
+                if pf:
+                    br = getattr(pf, "block_reason", None)
+                    if br is not None:
+                        block_str = str(br)
+                        logging.warning(
+                            "[gemini] Prompt blocked (non-streaming): block_reason=%s, prompt_tokens=%s",
+                            block_str,
+                            getattr(usage, "prompt_token_count", None) if usage else None,
+                        )
+                        raise SafetyFilterError(
+                            f"Prompt blocked by Gemini: {block_str}",
+                            user_message=(
+                                f"入力内容がGeminiの安全性フィルターによりブロックされました（{block_str}）。"
+                                "該当メッセージの内容を確認してください。"
+                            ),
+                        )
 
                 if not resp.candidates:
                     logging.warning("[gemini] No candidates (attempt %d/%d)", attempt + 1, max_retries)
