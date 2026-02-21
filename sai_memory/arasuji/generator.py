@@ -918,33 +918,20 @@ class ArasujiGenerator:
 
             LOGGER.info(f"Processing messages {i+1}-{i+len(batch)} of {total}")
 
-            # Generate level-1 arasuji with retry
-            max_retries = 3
-            entry = None
-            for attempt in range(max_retries):
-                entry = generate_level1_arasuji(
-                    self.client,
-                    self.conn,
-                    batch,
-                    dry_run=dry_run,
-                    include_timestamp=self.include_timestamp,
-                    memopedia_context=self.memopedia_context,
-                    debug_log_path=self.debug_log_path,
-                    persona_id=self.persona_id,
-                )
-                if entry:
-                    break
-                LOGGER.warning(
-                    f"Level-1 generation failed (attempt {attempt + 1}/{max_retries}) "
-                    f"for messages {i+1}-{i+len(batch)}"
-                )
-                if attempt < max_retries - 1:
-                    time.sleep(2 ** attempt)
-            else:
-                # All retries failed — abort generation
+            # Generate level-1 arasuji (retries are handled inside each LLM client)
+            entry = generate_level1_arasuji(
+                self.client,
+                self.conn,
+                batch,
+                dry_run=dry_run,
+                include_timestamp=self.include_timestamp,
+                memopedia_context=self.memopedia_context,
+                debug_log_path=self.debug_log_path,
+                persona_id=self.persona_id,
+            )
+            if not entry:
                 raise RuntimeError(
-                    f"Level-1 generation failed after {max_retries} attempts "
-                    f"for messages {i+1}-{i+len(batch)}"
+                    f"Level-1 generation failed for messages {i+1}-{i+len(batch)}"
                 )
 
             level1_entries.append(entry)
