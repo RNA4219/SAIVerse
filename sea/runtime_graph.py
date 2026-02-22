@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, Callable, Dict, List, Optional
 
 from llm_clients.exceptions import LLMError
-from sea.cancellation import CancellationToken
+from sea.cancellation import CancellationToken, ExecutionCancelledException
 from sea.langgraph_runner import compile_playbook
 from sea.playbook_models import PlaybookSchema
 
