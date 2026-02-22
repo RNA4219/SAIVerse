@@ -1,3 +1,4 @@
+import asyncio
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -265,3 +266,57 @@ def test_emit_say_payload_compatibility() -> None:
     history_manager.add_to_building_only.assert_called_once()
     payload = history_manager.add_to_building_only.call_args.args[1]
     assert payload["metadata"] == {"tags": ["pulse:p-1", "media"], "image": "x.png", "with": ["npc-2", "user"]}
+
+
+def test_lg_tool_call_node_reflects_result_in_state(monkeypatch: pytest.MonkeyPatch) -> None:
+    runtime, persona = _runtime_and_persona()
+    playbook = SimpleNamespace(name="pb", display_name="PB")
+    node_def = SimpleNamespace(id="tool", call_source="fc", output_key="tool_result")
+
+    monkeypatch.setattr("tools.TOOL_REGISTRY", {"echo": lambda **kwargs: {"ok": kwargs.get("v")}})
+
+    class _Ctx:
+        def __enter__(self):
+            return None
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr("tools.context.persona_context", lambda *args, **kwargs: _Ctx())
+
+    state = {"fc": {"name": "echo", "args": {"v": "x"}}}
+    result = asyncio.run(runtime._lg_tool_call_node(node_def, persona, playbook)(state))
+
+    assert result["last"] == "{'ok': 'x'}"
+    assert result["tool_result"] == {"ok": "x"}
+
+
+def test_lg_stelis_nodes_manage_thread_state() -> None:
+    runtime, persona = _runtime_and_persona()
+    playbook = SimpleNamespace(name="pb")
+
+    active_calls: list[str] = []
+    memory = SimpleNamespace(
+        can_start_stelis=lambda max_depth: True,
+        get_current_thread=lambda: "parent-thread",
+        _thread_id=lambda _: "fallback-thread",
+        start_stelis_thread=lambda **kwargs: SimpleNamespace(thread_id="child-thread", depth=1),
+        append_persona_message=lambda *args, **kwargs: None,
+        set_active_thread=lambda tid: active_calls.append(tid),
+        get_stelis_info=lambda _: SimpleNamespace(chronicle_prompt=None),
+        end_stelis_thread=lambda **kwargs: True,
+    )
+    persona.sai_memory = memory
+    runtime._generate_stelis_chronicle = Mock(return_value="summary")
+
+    state = asyncio.run(runtime._lg_stelis_start_node(SimpleNamespace(id="start", label="x", stelis_config={}), persona, playbook)({}))
+    assert state["stelis_thread_id"] == "child-thread"
+    assert state["stelis_parent_thread_id"] == "parent-thread"
+
+    state = asyncio.run(runtime._lg_stelis_end_node(SimpleNamespace(id="end", generate_chronicle=True), persona, playbook)(state))
+    assert state["stelis_thread_id"] is None
+    assert state["stelis_parent_thread_id"] is None
+    assert state["stelis_chronicle"] == "summary"
+    assert active_calls == ["child-thread", "parent-thread"]
+
+
