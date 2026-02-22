@@ -4,7 +4,7 @@ from api.deps import get_manager
 from .models import (
     ArasujiStatsResponse, ArasujiListResponse, ArasujiEntryItem, SourceMessageItem,
     GenerateArasujiRequest, GenerationJobStatus, ChronicleCostEstimate,
-    MessagesByIdsRequest,
+    MessagesByIdsRequest, UpdateArasujiEntryRequest,
 )
 import sqlite3
 import logging
@@ -430,6 +430,33 @@ def delete_arasuji_entry(persona_id: str, entry_id: str, manager = Depends(get_m
     finally:
         conn.close()
 
+@router.patch("/{persona_id}/arasuji/{entry_id}", tags=["Chronicle"])
+def update_arasuji_entry(
+    persona_id: str,
+    entry_id: str,
+    request: UpdateArasujiEntryRequest,
+    manager=Depends(get_manager),
+):
+    """Update a Chronicle entry's content."""
+    from sai_memory.arasuji.storage import update_entry_content
+
+    conn = _get_arasuji_db(persona_id)
+    if not conn:
+        raise HTTPException(status_code=404, detail=f"Memory database not found for {persona_id}")
+
+    try:
+        success = update_entry_content(conn, entry_id, request.content)
+        if not success:
+            raise HTTPException(status_code=404, detail=f"Chronicle entry {entry_id} not found")
+        return {"success": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to update Chronicle entry: {e}")
+    finally:
+        conn.close()
+
+
 @router.delete("/{persona_id}/arasuji", tags=["Chronicle"])
 def delete_all_arasuji_entries(persona_id: str, manager=Depends(get_manager)):
     """Delete ALL Chronicle entries and reset progress."""
@@ -692,7 +719,7 @@ def _run_chronicle_generation(
 
         # Progress callback
         def progress_callback(processed: int, total: int):
-            _update_job(job_id, progress=processed, message=f"Processing... {processed}/{total}")
+            _update_job(job_id, progress=processed, total=total, message=f"Processing... {processed}/{total}")
 
         # Memopedia batch callback if enabled
         batch_callback = None

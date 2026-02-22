@@ -275,6 +275,29 @@ def mark_consolidated(
     conn.commit()
 
 
+def update_entry_content(
+    conn: sqlite3.Connection,
+    entry_id: str,
+    content: str,
+) -> bool:
+    """Update the content of an arasuji entry.
+
+    Args:
+        conn: Database connection
+        entry_id: ID of the entry to update
+        content: New content text
+
+    Returns:
+        True if the entry was found and updated, False otherwise
+    """
+    cur = conn.execute(
+        "UPDATE arasuji_entries SET content = ? WHERE id = ?",
+        (content, entry_id),
+    )
+    conn.commit()
+    return cur.rowcount > 0
+
+
 def get_all_entries_ordered(
     conn: sqlite3.Connection,
     *,
@@ -648,7 +671,7 @@ def find_covering_entry(
         SELECT id, level, content, source_ids_json, start_time, end_time,
                source_count, message_count, parent_id, is_consolidated, created_at
         FROM arasuji_entries
-        WHERE level = ? AND start_time <= ? AND end_time >= ?
+        WHERE level = ? AND start_time <= ? AND end_time > ?
         ORDER BY start_time ASC
         LIMIT 1
         """,

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
-import { Loader2, ChevronLeft, BookOpen, Layers, Trash2, Play, Settings, Square } from 'lucide-react';
+import { Loader2, ChevronLeft, BookOpen, Layers, Trash2, Play, Settings, Square, Edit2, Save, X } from 'lucide-react';
 import styles from './ArasujiViewer.module.css';
 import ModalOverlay from '../common/ModalOverlay';
 
@@ -79,6 +79,8 @@ export default function ArasujiViewer({ personaId }: ArasujiViewerProps) {
     } | null>(null);
     const [errorBatchMessages, setErrorBatchMessages] = useState<SourceMessage[]>([]);
     const [isLoadingErrorBatch, setIsLoadingErrorBatch] = useState(false);
+    const [editingEntryId, setEditingEntryId] = useState<string | null>(null);
+    const [editContent, setEditContent] = useState("");
     const pollingRef = useRef<NodeJS.Timeout | null>(null);
 
     useEffect(() => {
@@ -187,6 +189,43 @@ export default function ArasujiViewer({ personaId }: ArasujiViewerProps) {
             setSourceMessages([]);
         }
     }, [selectedEntry?.id]);
+
+    const handleEditStart = (entry: ArasujiEntry) => {
+        setEditingEntryId(entry.id);
+        setEditContent(entry.content);
+    };
+
+    const handleEditCancel = () => {
+        setEditingEntryId(null);
+        setEditContent("");
+    };
+
+    const handleEditSave = async () => {
+        if (!editingEntryId) return;
+        try {
+            const res = await fetch(`/api/people/${personaId}/arasuji/${editingEntryId}`, {
+                method: 'PATCH',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ content: editContent }),
+            });
+            if (res.ok) {
+                // Update local state
+                setEntries(prev => prev.map(e =>
+                    e.id === editingEntryId ? { ...e, content: editContent } : e
+                ));
+                if (selectedEntry?.id === editingEntryId) {
+                    setSelectedEntry({ ...selectedEntry, content: editContent });
+                }
+                setEditingEntryId(null);
+                setEditContent("");
+            } else {
+                alert("保存に失敗しました");
+            }
+        } catch (error) {
+            console.error("Failed to update arasuji", error);
+            alert("保存中にエラーが発生しました");
+        }
+    };
 
     const handleDelete = async (entryId: string, e: React.MouseEvent) => {
         e.stopPropagation();
@@ -475,7 +514,7 @@ export default function ArasujiViewer({ personaId }: ArasujiViewerProps) {
                                 <Square size={12} />
                             </button>
                         </div>
-                        {generationJob.total && generationJob.total > 0 && (
+                        {generationJob.total != null && generationJob.total > 0 && (
                             <div className={styles.progressTrack}>
                                 <div
                                     className={styles.progressFill}
@@ -691,6 +730,14 @@ export default function ArasujiViewer({ personaId }: ArasujiViewerProps) {
                     </span>
                     {selectedEntry && (
                         <>
+                            <button
+                                className={styles.detailRegenerateBtn}
+                                onClick={() => handleEditStart(selectedEntry)}
+                                title="編集"
+                            >
+                                <Edit2 size={16} />
+                                編集
+                            </button>
                             {selectedEntry.level === 1 && (
                                 <button
                                     className={styles.detailRegenerateBtn}
@@ -747,9 +794,28 @@ export default function ArasujiViewer({ personaId }: ArasujiViewerProps) {
                                 </div>
                             </div>
                             <div className={styles.contentSection}>
-                                <div className={styles.contentText}>
-                                    {selectedEntry.content}
-                                </div>
+                                {editingEntryId === selectedEntry.id ? (
+                                    <div className={styles.editInterface}>
+                                        <textarea
+                                            className={styles.editTextarea}
+                                            value={editContent}
+                                            onChange={(e) => setEditContent(e.target.value)}
+                                            rows={8}
+                                        />
+                                        <div className={styles.editButtons}>
+                                            <button onClick={handleEditSave} className={styles.editSaveBtn}>
+                                                <Save size={14} /> 保存
+                                            </button>
+                                            <button onClick={handleEditCancel} className={styles.editCancelBtn}>
+                                                <X size={14} /> キャンセル
+                                            </button>
+                                        </div>
+                                    </div>
+                                ) : (
+                                    <div className={styles.contentText}>
+                                        {selectedEntry.content}
+                                    </div>
+                                )}
                             </div>
 
                             {/* Source Items Section */}

@@ -882,6 +882,11 @@ class ArasujiGenerator:
 
         level1_entries: List[ArasujiEntry] = []
         consolidated_entries: List[ArasujiEntry] = []
+        # Track Level-2 entries created during THIS run to exclude from
+        # gap-fill detection.  Gap-fill is meant for Level-2 entries from
+        # PREVIOUS runs — entries created in the current run are sequential
+        # consolidation results, not gap-fill targets.
+        created_l2_ids: set = set()
 
         total = len(messages)
 
@@ -943,11 +948,23 @@ class ArasujiGenerator:
             else:
                 covering = None
 
+            # Exclude Level-2 entries created during this run — they are
+            # sequential consolidation results, not gap-fill targets.
+            if covering and covering.id in created_l2_ids:
+                LOGGER.info(
+                    "Skipping gap-fill for entry %s: covering level-2 %s "
+                    "was created in the current run",
+                    entry.id[:8], covering.id[:8],
+                )
+                covering = None
+
             if covering:
                 # Gap-fill: integrate into existing hierarchy
                 LOGGER.info(
-                    f"Gap-fill detected: integrating entry {entry.id[:8]} "
-                    f"into level-2 {covering.id[:8]}..."
+                    "Gap-fill detected: integrating entry %s "
+                    "(time %s-%s) into level-2 %s (time %s-%s)",
+                    entry.id[:8], entry.start_time, entry.end_time,
+                    covering.id[:8], covering.start_time, covering.end_time,
                 )
                 regenerated = integrate_gap_fill(
                     self.client,
@@ -968,6 +985,10 @@ class ArasujiGenerator:
                     include_timestamp=self.include_timestamp,
                     persona_id=self.persona_id,
                 )
+                # Track Level-2 entries created in this run
+                for c in consolidated:
+                    if c.level == 2:
+                        created_l2_ids.add(c.id)
                 consolidated_entries.extend(consolidated)
 
             # Call batch callback for Memopedia extraction (Memory Weave interleaved mode)

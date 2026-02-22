@@ -434,6 +434,11 @@ class GenerationJobStatus(BaseModel):
     error_meta: Optional[dict] = None  # エラー発生バッチのメタデータ (message_ids, start_time, end_time)
 
 
+class UpdateArasujiEntryRequest(BaseModel):
+    """Chronicleエントリ更新リクエスト"""
+    content: str
+
+
 class MessagesByIdsRequest(BaseModel):
     """メッセージID指定取得リクエスト"""
     ids: List[str]

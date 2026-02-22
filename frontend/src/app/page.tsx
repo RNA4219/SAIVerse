@@ -16,6 +16,7 @@ import SaiverseLink from '@/components/SaiverseLink';
 import ItemModal from '@/components/ItemModal';
 import ContextPreviewModal, { ContextPreviewData } from '@/components/ContextPreviewModal';
 import PlaybookPermissionDialog, { PermissionRequestData } from '@/components/PlaybookPermissionDialog';
+import ChronicleConfirmDialog, { ChronicleConfirmData } from '@/components/ChronicleConfirmDialog';
 import ModalOverlay from '@/components/common/ModalOverlay';
 import { Send, Plus, Paperclip, Eye, X, Info, Users, Menu, Copy, Check, SlidersHorizontal, ChevronDown, AlertTriangle, ArrowUpCircle, Loader, RefreshCw, Square } from 'lucide-react';
 import { useActivityTracker } from '@/hooks/useActivityTracker';
@@ -125,6 +126,7 @@ export default function Home() {
     const [inputValue, setInputValue] = useState('');
     const [loadingStatus, setLoadingStatus] = useState<string | null>(null);
     const [permissionRequest, setPermissionRequest] = useState<PermissionRequestData | null>(null);
+    const [chronicleConfirm, setChronicleConfirm] = useState<ChronicleConfirmData | null>(null);
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const chatAreaRef = useRef<HTMLDivElement>(null); // Ref for the scrollable area
     const [isHistoryLoaded, setIsHistoryLoaded] = useState(false);
@@ -928,6 +930,19 @@ export default function Home() {
         }
     }, []);
 
+    const handleChronicleConfirmResponse = useCallback(async (requestId: string, decision: string) => {
+        setChronicleConfirm(null);
+        try {
+            await fetch('/api/chat/permission-response', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ request_id: requestId, decision }),
+            });
+        } catch (e) {
+            console.error('Failed to send chronicle confirm response', e);
+        }
+    }, []);
+
     const handleSendMessage = async () => {
         if ((!inputValue.trim() && attachments.length === 0) || loadingStatus) return;
         isProcessingRef.current = true;
@@ -1224,6 +1239,15 @@ export default function Home() {
                                 playbookName: event.playbook_name,
                                 playbookDisplayName: event.playbook_display_name || event.playbook_name,
                                 playbookDescription: event.playbook_description || '',
+                                personaName: event.persona_name || '',
+                            });
+                        } else if (event.type === 'chronicle_confirm') {
+                            setChronicleConfirm({
+                                requestId: event.request_id,
+                                unprocessedMessages: event.unprocessed_messages,
+                                totalMessages: event.total_messages,
+                                estimatedLlmCalls: event.estimated_llm_calls,
+                                modelName: event.model_name || '',
                                 personaName: event.persona_name || '',
                             });
                         } else if (event.type === 'warning') {
@@ -1944,6 +1968,13 @@ export default function Home() {
                 <PlaybookPermissionDialog
                     request={permissionRequest}
                     onRespond={handlePermissionResponse}
+                />
+            )}
+
+            {chronicleConfirm && (
+                <ChronicleConfirmDialog
+                    request={chronicleConfirm}
+                    onRespond={handleChronicleConfirmResponse}
                 />
             )}
 
