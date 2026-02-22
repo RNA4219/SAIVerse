@@ -404,6 +404,16 @@ export default function Home() {
     }, [messages, isLoadingMore]);
 
 
+    type HistoryResponse = {
+        history?: Message[];
+        has_more?: boolean;
+        error?: string;
+    };
+
+    const resolveHasMore = (data: HistoryResponse, newMessages: Message[]) => {
+        return data.has_more !== undefined ? data.has_more : newMessages.length >= 20;
+    };
+
     const fetchHistory = async (beforeId?: string, overrideBuildingId?: string) => {
         try {
             if (!beforeId) {
@@ -426,12 +436,10 @@ export default function Home() {
             const res = await fetch(`/api/chat/history?${params.toString()}`);
             if (res.ok) {
                 setBackendConnected(true);
-                const data = await res.json();
+                const data: HistoryResponse = await res.json();
                 const newMessages: Message[] = data.history || [];
-                // Use server-provided has_more flag if available, fallback to count-based heuristic
-                const serverHasMore = data.has_more;
-                const effectiveHasMore = serverHasMore !== undefined ? serverHasMore : (newMessages.length >= 20);
-                console.log(`[DEBUG] Fetched ${newMessages.length} items (beforeId=${beforeId}, server has_more=${serverHasMore}, effectiveHasMore=${effectiveHasMore})`);
+                const effectiveHasMore = resolveHasMore(data, newMessages);
+                console.log(`[DEBUG] Fetched ${newMessages.length} items (beforeId=${beforeId}, server has_more=${data.has_more}, effectiveHasMore=${effectiveHasMore})`);
 
                 if (!effectiveHasMore) {
                     setHasMore(false);
@@ -450,9 +458,20 @@ export default function Home() {
                     setTimeout(() => setIsHistoryLoaded(true), 150);
                 }
             } else {
-                console.error("[DEBUG] Fetch failed", res.status);
-                if (res.status >= 500) setBackendConnected(false);
+                const errorPayload: HistoryResponse | null = await res.json().catch(() => null);
+                console.error("[DEBUG] Fetch failed", {
+                    status: res.status,
+                    beforeId,
+                    buildingId: bid,
+                    error: errorPayload?.error,
+                });
+
+                if (res.status >= 500) {
+                    setBackendConnected(false);
+                    setHasMore(false);
+                }
                 if (!beforeId) setMessages([]);
+                setIsHistoryLoaded(true);
             }
         } catch (err) {
             console.error("Failed to load history", err);
@@ -1228,7 +1247,13 @@ export default function Home() {
                             }]);
                         } else if (event.type === 'metabolism') {
                             if (event.status === 'completed') {
-                                setLoadingStatus('Thinking...');
+                                // Show completion message briefly, then transition
+                                if (event.content) {
+                                    setLoadingStatus(event.content);
+                                    setTimeout(() => setLoadingStatus('Thinking...'), 2000);
+                                } else {
+                                    setLoadingStatus('Thinking...');
+                                }
                             } else {
                                 // started, running, etc. — show content as loading status
                                 setLoadingStatus(event.content || '記憶を整理しています...');
@@ -1790,7 +1815,14 @@ export default function Home() {
                             </div>
                         </div>
                     ))}
-                    {loadingStatus && <div className={styles.loading}>{loadingStatus}</div>}
+                    {loadingStatus && (
+                        <div className={styles.loading} role="status" aria-label={loadingStatus}>
+                            <span className={styles.loadingSpinner} aria-hidden="true" />
+                            {loadingStatus !== 'Thinking...' && (
+                                <span className={styles.loadingText}>{loadingStatus}</span>
+                            )}
+                        </div>
+                    )}
                     <div ref={messagesEndRef} />
                 </div>
 
