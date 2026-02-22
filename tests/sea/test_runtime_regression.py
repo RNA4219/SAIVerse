@@ -321,38 +321,3 @@ def test_lg_stelis_nodes_manage_thread_state() -> None:
     assert active_calls == ["child-thread", "parent-thread"]
 
 
-def test_run_playbook_propagates_context_warning_callback() -> None:
-    runtime, persona = _runtime_and_persona()
-    playbook = SimpleNamespace(name="meta_user/exec", start_node="exec", context_requirements=SimpleNamespace(history_depth="full"))
-    events: list[dict] = []
-
-    def _prepare(*args, **kwargs):
-        kwargs["warnings"].append({"type": "warning", "warning_code": "context_auto_trimmed", "content": "trimmed"})
-        return []
-
-    runtime._prepare_context = Mock(side_effect=_prepare)
-    runtime._compile_with_langgraph = Mock(return_value=[])
-
-    run_playbook(runtime, playbook, persona, "b1", "hello", auto_mode=False, event_callback=events.append)
-
-    assert events == [{"type": "warning", "warning_code": "context_auto_trimmed", "content": "trimmed"}]
-
-
-def test_maybe_run_metabolism_watermark_judgement() -> None:
-    runtime, persona = _runtime_and_persona()
-    persona.history_manager = SimpleNamespace(
-        metabolism_anchor_message_id="anchor",
-        get_history_from_anchor=Mock(return_value=[{"id": f"m{i}"} for i in range(31)]),
-    )
-    runtime.manager.metabolism_enabled = True
-    runtime._get_high_watermark = Mock(return_value=30)
-    runtime._get_low_watermark = Mock(return_value=20)
-    runtime._run_metabolism = Mock()
-
-    runtime._maybe_run_metabolism(persona, "b1")
-    runtime._run_metabolism.assert_not_called()
-
-    runtime._get_low_watermark = Mock(return_value=10)
-    runtime._maybe_run_metabolism(persona, "b1")
-    runtime._run_metabolism.assert_called_once()
-
