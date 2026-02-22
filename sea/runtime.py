@@ -1112,7 +1112,8 @@ class SEARuntime:
             LOGGER.debug("[memorize] action_template=%s", action_template)
             LOGGER.debug("[memorize] available variables containing 'finalize': %s", 
                         {k: v for k, v in variables.items() if 'finalize' in str(k).lower()})
-            memo_text = _format(action_template, variables)
+            from .runtime_utils import _format as runtime_format
+            memo_text = runtime_format(action_template, variables)
             LOGGER.debug("[memorize] memo_text=%s", memo_text)
             role = getattr(node_def, "role", "assistant") or "assistant"
             tags = getattr(node_def, "tags", None)
@@ -1273,7 +1274,8 @@ class SEARuntime:
                 "input": state.get("inputs", {}).get("input", ""),
                 "last": state.get("last", ""),
             })
-            sub_input = _format(template, variables)
+            from .runtime_utils import _format as runtime_format
+            sub_input = runtime_format(template, variables)
             eff_bid = self._effective_building_id(persona, building_id)
 
             # Determine execution mode
@@ -1379,7 +1381,8 @@ class SEARuntime:
 
         # Simple template expansion
         try:
-            result = _format(value_template, state)
+            from .runtime_utils import _format as runtime_format
+            result = runtime_format(value_template, state)
             if result == value_template and "{" in value_template:
                 # Template was not expanded - log for debugging
                 LOGGER.debug("[sea][set] Template not expanded. Keys in state: %s", list(state.keys()))
@@ -1550,7 +1553,8 @@ class SEARuntime:
 
             node_id = getattr(node_def, "id", "stelis_start")
             label_raw = getattr(node_def, "label", None) or "Stelis Session"
-            label = _format(label_raw, state)
+            from .runtime_utils import _format as runtime_format
+            label = runtime_format(label_raw, state)
 
             # Send status event
             if event_callback:
