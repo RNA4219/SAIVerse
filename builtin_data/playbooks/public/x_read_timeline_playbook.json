@@ -9,6 +9,7 @@
         }
     ],
     "router_callable": true,
+    "required_credentials": ["x"],
     "nodes": [
         {
             "id": "fetch",
