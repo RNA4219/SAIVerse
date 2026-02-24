@@ -235,6 +235,26 @@ def post_tweet(text: str, creds: XCredentials, persona_path: Path) -> dict:
     return resp.json()
 
 
+def reply_tweet(
+    text: str,
+    in_reply_to_tweet_id: str,
+    creds: XCredentials,
+    persona_path: Path,
+) -> dict:
+    """Post a reply to a specific tweet. Returns the API response dict."""
+    resp = _make_request(
+        "POST",
+        f"{_X_API_BASE}/tweets",
+        creds, persona_path,
+        limiter_key="post_tweet",
+        json={
+            "text": text,
+            "reply": {"in_reply_to_tweet_id": in_reply_to_tweet_id},
+        },
+    )
+    return resp.json()
+
+
 def read_timeline(
     creds: XCredentials, persona_path: Path, max_results: int = 10
 ) -> List[dict]:
@@ -258,16 +278,25 @@ def read_timeline(
 
 
 def read_mentions(
-    creds: XCredentials, persona_path: Path, max_results: int = 10
+    creds: XCredentials,
+    persona_path: Path,
+    max_results: int = 10,
+    since_id: Optional[str] = None,
 ) -> List[dict]:
-    """Read mentions. Returns list of tweet dicts."""
-    params = {
+    """Read mentions. Returns list of tweet dicts.
+
+    Args:
+        since_id: If provided, only return mentions newer than this tweet ID.
+    """
+    params: Dict[str, Any] = {
         "max_results": min(max(max_results, 5), 100),
         "tweet.fields": "created_at,author_id,text,public_metrics,attachments",
         "expansions": "author_id,attachments.media_keys",
         "user.fields": "username,name",
         "media.fields": "url,preview_image_url,type",
     }
+    if since_id:
+        params["since_id"] = since_id
     resp = _make_request(
         "GET",
         f"{_X_API_BASE}/users/{creds.x_user_id}/mentions",
