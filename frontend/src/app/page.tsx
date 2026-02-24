@@ -9,6 +9,7 @@ import rehypeSanitize, { defaultSchema } from 'rehype-sanitize';
 import styles from './page.module.css';
 import Sidebar from '@/components/Sidebar';
 import ChatOptions from '@/components/ChatOptions';
+import ToolModeSelector from '@/components/ToolModeSelector';
 import RightSidebar from '@/components/RightSidebar';
 import PeopleModal from '@/components/PeopleModal';
 import TutorialWizard from '@/components/tutorial/TutorialWizard';
@@ -1833,7 +1834,7 @@ export default function Home() {
                     onDragLeave={handleDragLeave}
                     onDrop={handleDrop}
                 >
-                    {/* Options bar: Model display + settings button */}
+                    {/* Options bar: Model display + settings button + tool mode */}
                     <div className={styles.optionsBar}>
                         <button
                             className={styles.optionsBtn}
@@ -1846,6 +1847,12 @@ export default function Home() {
                             ) : null}
                             <ChevronDown size={14} className={styles.chevron} />
                         </button>
+                        <ToolModeSelector
+                            selectedPlaybook={selectedPlaybook}
+                            onPlaybookChange={setSelectedPlaybook}
+                            playbookParams={playbookParams}
+                            onPlaybookParamsChange={setPlaybookParams}
+                        />
                     </div>
 
                     {attachments.length > 0 && (
@@ -1934,7 +1941,7 @@ export default function Home() {
                             value={inputValue}
                             onChange={(e) => setInputValue(e.target.value)}
                             onKeyDown={handleKeyDown}
-                            placeholder={selectedPlaybook ? `Message (Playbook: ${selectedPlaybook})...` : "Type a message..."}
+                            placeholder="Type a message..."
                             rows={1}
                         />
                         {loadingStatus ? (
@@ -1967,10 +1974,6 @@ export default function Home() {
             <ChatOptions
                 isOpen={isOptionsOpen}
                 onClose={() => setIsOptionsOpen(false)}
-                currentPlaybook={selectedPlaybook}
-                onPlaybookChange={setSelectedPlaybook}
-                playbookParams={playbookParams}
-                onPlaybookParamsChange={setPlaybookParams}
                 currentModel={selectedModel}
                 onModelChange={(id, displayName) => {
                     setSelectedModel(id);
