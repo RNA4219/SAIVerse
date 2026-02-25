@@ -44,7 +44,6 @@ from sea.runtime_state import (
     update_router_selection,
 )
 
-from . import runtime_llm as runtime_llm_module
 from .runtime_emitters import RuntimeEmitters
 from .runtime_utils import _format, _is_llm_streaming_enabled
 LOGGER = logging.getLogger(__name__)
@@ -1455,18 +1454,48 @@ class SEARuntime:
         if not all_messages:
             return
 
-        # Calculate unprocessed message count before confirming
-        from sai_memory.arasuji.storage import get_total_message_count
-        processed_count = get_total_message_count(adapter.conn)
-        total_count = len(all_messages)
-        unprocessed_count = total_count - processed_count
+        batch_size_for_estimate = int(os.getenv("MEMORY_WEAVE_BATCH_SIZE", str(DEFAULT_BATCH_SIZE)))
 
-        if unprocessed_count <= 0:
-            LOGGER.info("[metabolism] No unprocessed messages for Chronicle generation")
+        # Pre-check: replicate the same contiguous-run logic used by
+        # generate_unprocessed() so we can skip the confirmation dialog
+        # when no run is large enough to produce even one batch.
+        _cur = adapter.conn.execute(
+            "SELECT DISTINCT json_each.value "
+            "FROM arasuji_entries, json_each(source_ids_json) "
+            "WHERE level = 1"
+        )
+        _processed_ids = {row[0] for row in _cur.fetchall()}
+
+        _runs: list[list] = []
+        _current_run: list = []
+        for _msg in all_messages:
+            if _msg.id in _processed_ids:
+                if _current_run:
+                    _runs.append(_current_run)
+                    _current_run = []
+                continue
+            _current_run.append(_msg)
+        if _current_run:
+            _runs.append(_current_run)
+
+        # Count only full batches (trailing incomplete batches are skipped
+        # by generate_from_messages), matching the cost-estimate API logic.
+        qualifying_batches = sum(
+            len(r) // batch_size_for_estimate
+            for r in _runs if len(r) >= batch_size_for_estimate
+        )
+
+        if qualifying_batches == 0:
+            total_unprocessed = sum(len(r) for r in _runs)
+            LOGGER.info(
+                "[metabolism] No qualifying runs for Chronicle generation "
+                "(%d unprocessed messages in %d runs, all < batch_size %d)",
+                total_unprocessed, len(_runs), batch_size_for_estimate,
+            )
             return
 
-        batch_size_for_estimate = int(os.getenv("MEMORY_WEAVE_BATCH_SIZE", str(DEFAULT_BATCH_SIZE)))
-        estimated_llm_calls = max(1, (unprocessed_count + batch_size_for_estimate - 1) // batch_size_for_estimate)
+        unprocessed_count = qualifying_batches * batch_size_for_estimate
+        estimated_llm_calls = qualifying_batches
 
         # Request user confirmation before generating
         if event_callback:
@@ -1483,7 +1512,7 @@ class SEARuntime:
                 "type": "chronicle_confirm",
                 "request_id": request_id,
                 "unprocessed_messages": unprocessed_count,
-                "total_messages": total_count,
+                "total_messages": len(all_messages),
                 "estimated_llm_calls": estimated_llm_calls,
                 "model_name": display_model,
                 "persona_name": persona_name,
@@ -1585,9 +1614,16 @@ class SEARuntime:
         persona: Any,
         building_id: str,
         user_input: str,
-        playbook_name: Optional[str] = None,
+        meta_playbook: Optional[str] = None,
+        image_count: int = 0,
+        document_count: int = 0,
     ) -> Dict[str, Any]:
-        return preview_context_impl(self, persona, building_id, user_input, playbook_name=playbook_name)
+        return preview_context_impl(
+            self, persona, building_id, user_input,
+            meta_playbook=meta_playbook,
+            image_count=image_count,
+            document_count=document_count,
+        )
 
     def _enrich_history_with_attachments(self, messages: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """Enrich history messages with attachment context.

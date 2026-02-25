@@ -176,25 +176,29 @@ class RuntimeEngine:
                             self.runtime._notify_persona_permission_result(state, persona, clean_name, denial_msg, event_callback)
                             return state
 
-                        response = self.runtime._request_playbook_permission(clean_name, persona, event_callback)
+                        # Schedule-triggered executions: user pre-approved by creating the schedule
+                        if state.get("pulse_type") == "schedule":
+                            log_sea_trace(playbook.name, node_id, "PERM", f"{clean_name}: auto-allowed (schedule)")
+                        else:
+                            response = self.runtime._request_playbook_permission(clean_name, persona, event_callback)
 
-                        if response in ("deny", "timeout"):
-                            denial_msg = (
-                                f"User denied execution of playbook '{clean_name}'. Please respond without using this tool."
-                                if response == "deny"
-                                else f"Permission request for playbook '{clean_name}' timed out. Please respond without using this tool."
-                            )
-                            self.runtime._notify_persona_permission_result(state, persona, clean_name, denial_msg, event_callback)
-                            return state
+                            if response in ("deny", "timeout"):
+                                denial_msg = (
+                                    f"User denied execution of playbook '{clean_name}'. Please respond without using this tool."
+                                    if response == "deny"
+                                    else f"Permission request for playbook '{clean_name}' timed out. Please respond without using this tool."
+                                )
+                                self.runtime._notify_persona_permission_result(state, persona, clean_name, denial_msg, event_callback)
+                                return state
 
-                        if response == "always_allow":
-                            self.runtime._set_playbook_permission(city_id, clean_name, "auto_allow")
+                            if response == "always_allow":
+                                self.runtime._set_playbook_permission(city_id, clean_name, "auto_allow")
 
-                        if response == "never_use":
-                            denial_msg = f"User disabled playbook '{clean_name}'. This playbook will not be available in future. Please respond without using this tool."
-                            self.runtime._set_playbook_permission(city_id, clean_name, "user_only")
-                            self.runtime._notify_persona_permission_result(state, persona, clean_name, denial_msg, event_callback)
-                            return state
+                            if response == "never_use":
+                                denial_msg = f"User disabled playbook '{clean_name}'. This playbook will not be available in future. Please respond without using this tool."
+                                self.runtime._set_playbook_permission(city_id, clean_name, "user_only")
+                                self.runtime._notify_persona_permission_result(state, persona, clean_name, denial_msg, event_callback)
+                                return state
 
                     # perm == "auto_allow" or allowed via dialog → continue
 
@@ -216,8 +220,10 @@ class RuntimeEngine:
                 log_sea_trace(playbook.name, node_id, "EXEC", f"→ {sub_name} (input=\"{str(sub_input)}\")")
 
             try:
+                cancellation_token = state.get("_cancellation_token")
                 sub_outputs = await asyncio.to_thread(
-                    self.runtime._run_playbook, sub_pb, persona, eff_bid, sub_input, auto_mode, True, state, event_callback
+                    self.runtime._run_playbook, sub_pb, persona, eff_bid, sub_input, auto_mode, True, state, event_callback,
+                    cancellation_token=cancellation_token,
                 )
             except Exception as exc:
                 LOGGER.exception("SEA LangGraph exec sub-playbook failed")

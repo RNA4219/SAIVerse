@@ -111,15 +111,42 @@ def estimate_chronicle_cost(
     try:
         total_messages = count_messages(conn)
         processed_messages = get_total_message_count(conn)
-        unprocessed = max(0, total_messages - processed_messages)
 
         # Use query params if provided, otherwise fall back to env vars
         batch_size = batch_size or int(os.getenv("MEMORY_WEAVE_BATCH_SIZE", "20"))
         consolidation_size = consolidation_size or int(os.getenv("MEMORY_WEAVE_CONSOLIDATION_SIZE", "10"))
         model_name = os.getenv("MEMORY_WEAVE_MODEL", "gemini-2.5-flash-lite-preview-09-2025")
 
-        # Estimate LLM calls
-        level1_calls = math.ceil(unprocessed / batch_size) if unprocessed > 0 else 0
+        # Calculate qualifying unprocessed messages using the same
+        # contiguous-run logic as generate_unprocessed().  Messages in
+        # runs shorter than batch_size are skipped during generation,
+        # so they should not be counted here either.
+        _cur = conn.execute(
+            "SELECT DISTINCT json_each.value "
+            "FROM arasuji_entries, json_each(source_ids_json) "
+            "WHERE level = 1"
+        )
+        _processed_ids = {row[0] for row in _cur.fetchall()}
+
+        _msg_ids_cur = conn.execute(
+            "SELECT id FROM messages ORDER BY created_at ASC"
+        )
+        _runs_lengths: list[int] = []
+        _run_len = 0
+        for (msg_id,) in _msg_ids_cur:
+            if msg_id in _processed_ids:
+                if _run_len > 0:
+                    _runs_lengths.append(_run_len)
+                    _run_len = 0
+                continue
+            _run_len += 1
+        if _run_len > 0:
+            _runs_lengths.append(_run_len)
+
+        # Count only full batches within qualifying runs (incomplete
+        # trailing batches are skipped by generate_from_messages).
+        level1_calls = sum(n // batch_size for n in _runs_lengths if n >= batch_size)
+        unprocessed = level1_calls * batch_size
         # Consolidation calls: every consolidation_size level-1 entries -> 1 level-2 call, etc.
         consolidation_calls = 0
         entries_at_level = level1_calls
@@ -598,6 +625,7 @@ def _run_chronicle_generation(
     consolidation_size: int,
     model_name: Optional[str],
     with_memopedia: bool,
+    include_timestamp: bool = True,
 ):
     """Background worker for Chronicle generation."""
     import json
@@ -622,11 +650,13 @@ def _run_chronicle_generation(
         init_arasuji_tables(conn)
 
         # Fetch all messages ordered by time (oldest first)
+        # Exclude Stelis threads — sub-agent work logs are not the persona's own experiences
         _update_job(job_id, message="Fetching messages...")
 
         cur = conn.execute("""
             SELECT id, thread_id, role, content, resource_id, created_at, metadata
             FROM messages
+            WHERE thread_id NOT IN (SELECT thread_id FROM stelis_threads)
             ORDER BY created_at ASC
         """)
 
@@ -654,7 +684,10 @@ def _run_chronicle_generation(
             conn.close()
             return
 
-        LOGGER.info(f"[Chronicle Gen] Loaded {len(all_messages)} messages")
+        # Log how many Stelis messages were excluded
+        stelis_count_row = conn.execute("SELECT COUNT(*) FROM messages WHERE thread_id IN (SELECT thread_id FROM stelis_threads)").fetchone()
+        stelis_excluded = stelis_count_row[0] if stelis_count_row else 0
+        LOGGER.info("[Chronicle Gen] Loaded %d messages (%d Stelis messages excluded)", len(all_messages), stelis_excluded)
 
         # Initialize LLM client
         _update_job(job_id, message="Initializing LLM client...")
@@ -693,7 +726,7 @@ def _run_chronicle_generation(
             conn,
             batch_size=batch_size,
             consolidation_size=consolidation_size,
-            include_timestamp=True,
+            include_timestamp=include_timestamp,
             memopedia_context=memopedia_context,
             persona_id=persona_id,
         )
@@ -822,6 +855,7 @@ async def start_arasuji_generation(
         consolidation_size=request.consolidation_size,
         model_name=request.model,
         with_memopedia=request.with_memopedia,
+        include_timestamp=request.include_timestamp,
     )
 
     return {"job_id": job_id, "status": "started"}
