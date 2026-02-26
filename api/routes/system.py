@@ -1,4 +1,4 @@
-"""System-level API endpoints: version check, update trigger."""
+"""System-level API endpoints: version check, update trigger, announcements."""
 
 import json
 import logging
@@ -25,6 +25,15 @@ _GITHUB_REPO = "maha0525/SAIVerse"
 _CACHE_TTL = 3600  # 1 hour
 _cached_latest: Optional[dict] = None
 _cached_at: float = 0.0
+
+# --- Announcements cache ---
+_ANNOUNCEMENTS_GIST_URL: str = os.environ.get(
+    "SAIVERSE_ANNOUNCEMENTS_URL",
+    "https://gist.githubusercontent.com/maha0525/5e4c1aacf9d9550c5a46ca9d847ae559/raw/saiverse_announcements.json",
+)
+_ANNOUNCEMENTS_CACHE_TTL = 1800  # 30 minutes
+_cached_announcements: Optional[dict] = None
+_cached_announcements_at: float = 0.0
 
 
 def _compare_versions(current: str, latest: str) -> bool:
@@ -102,6 +111,41 @@ async def get_version():
         "release_name": None,
         "checked_at": None,
     }
+
+
+def _fetch_announcements() -> Optional[dict]:
+    """Fetch announcements JSON from GitHub Gist.
+
+    Returns the parsed JSON dict, or None on failure.
+    Caches result for _ANNOUNCEMENTS_CACHE_TTL seconds.
+    """
+    global _cached_announcements, _cached_announcements_at
+
+    now = time.time()
+    if _cached_announcements is not None and (now - _cached_announcements_at) < _ANNOUNCEMENTS_CACHE_TTL:
+        return _cached_announcements
+
+    # Append timestamp to bypass GitHub CDN cache (max-age=300)
+    bust = f"{'&' if '?' in _ANNOUNCEMENTS_GIST_URL else '?'}t={int(now)}"
+    req = Request(_ANNOUNCEMENTS_GIST_URL + bust, headers={"User-Agent": "SAIVerse"})
+    try:
+        with urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            _cached_announcements = data
+            _cached_announcements_at = now
+            return data
+    except (URLError, OSError, json.JSONDecodeError) as exc:
+        LOGGER.warning("Failed to fetch announcements from Gist: %s", exc)
+        return _cached_announcements  # return stale cache if available
+
+
+@router.get("/announcements")
+async def get_announcements():
+    """Return announcements from the configured Gist."""
+    data = _fetch_announcements()
+    if data is None:
+        return {"announcements": []}
+    return data
 
 
 @router.post("/update")

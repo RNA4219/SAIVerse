@@ -19,7 +19,7 @@ import ContextPreviewModal, { ContextPreviewData } from '@/components/ContextPre
 import PlaybookPermissionDialog, { PermissionRequestData } from '@/components/PlaybookPermissionDialog';
 import ChronicleConfirmDialog, { ChronicleConfirmData } from '@/components/ChronicleConfirmDialog';
 import ModalOverlay from '@/components/common/ModalOverlay';
-import { Send, Plus, Paperclip, Eye, X, Info, Users, Menu, Copy, Check, SlidersHorizontal, ChevronDown, AlertTriangle, ArrowUpCircle, Loader, RefreshCw, Square } from 'lucide-react';
+import { Send, Plus, Paperclip, Eye, X, Info, Users, Menu, Copy, Check, SlidersHorizontal, ChevronDown, AlertTriangle, ArrowUpCircle, Loader, RefreshCw, Square, Bell } from 'lucide-react';
 import { useActivityTracker } from '@/hooks/useActivityTracker';
 
 // Allow className on HTML elements used by thinking blocks (<details>, <div>, <summary>)
@@ -307,6 +307,9 @@ export default function Home() {
         return false;
     });
     const updatingTargetVersion = useRef<string>('');
+
+    // Announcements unread badge
+    const [hasUnreadAnnouncements, setHasUnreadAnnouncements] = useState(false);
 
     // Toast notifications
     const [toasts, setToasts] = useState<{id: string; content: string}[]>([]);
@@ -687,6 +690,38 @@ export default function Home() {
                 }
             })
             .catch(() => { /* ignore - backend may not support this endpoint yet */ });
+
+        // Check for unread announcements (and poll every 30 minutes)
+        const checkAnnouncements = () => {
+            fetch('/api/system/announcements')
+                .then(res => res.ok ? res.json() : null)
+                .then(data => {
+                    if (data?.announcements?.length > 0) {
+                        const raw = JSON.stringify(data.announcements);
+                        let hash = 5381;
+                        for (let i = 0; i < raw.length; i++) {
+                            hash = ((hash << 5) + hash + raw.charCodeAt(i)) | 0;
+                        }
+                        const currentHash = (hash >>> 0).toString(16);
+                        const savedHash = localStorage.getItem('saiverse_announcements_hash');
+                        setHasUnreadAnnouncements(currentHash !== savedHash);
+                    }
+                })
+                .catch(() => { /* ignore */ });
+        };
+        checkAnnouncements();
+        const announcementInterval = setInterval(checkAnnouncements, 30 * 60 * 1000);
+
+        // Also check when the tab becomes visible again
+        const onVisibilityChange = () => {
+            if (document.visibilityState === 'visible') checkAnnouncements();
+        };
+        document.addEventListener('visibilitychange', onVisibilityChange);
+
+        return () => {
+            clearInterval(announcementInterval);
+            document.removeEventListener('visibilitychange', onVisibilityChange);
+        };
     }, []);
 
     // Handle building deletion from WorldEditor — switch to another building
@@ -1545,6 +1580,18 @@ export default function Home() {
                         <h1>{currentBuildingName}</h1>
                     </div>
                     <div className={styles.headerRight}>
+                        {hasUnreadAnnouncements && (
+                            <button
+                                className={styles.iconBtn}
+                                onClick={() => { window.location.href = '/announcements'; }}
+                                title="お知らせ（未読あり）"
+                            >
+                                <span className={styles.bellWrapper}>
+                                    <Bell size={20} />
+                                    <span className={styles.bellDot} />
+                                </span>
+                            </button>
+                        )}
                         <button
                             className={styles.iconBtn}
                             onClick={() => setIsPeopleModalOpen(true)}
