@@ -86,6 +86,15 @@ def compile_with_langgraph(
             value = parent[param_name]
             LOGGER.debug("[sea][LangGraph] Fallback: using parent value for %s: %s", param_name, str(value)[:120] if value else "(empty)")
 
+        # Override: explicitly passed initial_params (e.g. from schedule playbook_params)
+        # take precedence over default source resolution.  This ensures that
+        # scheduled execution with selected_playbook="send_email_to_user" is not
+        # overwritten by the generic "input" source fallback.
+        _ip = parent.get("_initial_params")
+        if isinstance(_ip, dict) and param_name in _ip and _ip[param_name] is not None:
+            value = _ip[param_name]
+            LOGGER.debug("[sea][LangGraph] Override from _initial_params for %s: %s", param_name, str(value)[:120])
+
         inherited_vars[param_name] = value
 
     # Inherit pulse_usage_accumulator from parent_state if it exists (for sub-playbook calls)
