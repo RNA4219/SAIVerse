@@ -95,16 +95,19 @@ class TestLLMClients(unittest.TestCase):
 
     @patch('llm_clients.openai.OpenAI')
     @patch('llm_clients.openai._can_connect_to_host', return_value=False)
-    def test_openai_client_removes_dead_local_openai_base_url_env(self, mock_connect, mock_openai):
+    def test_openai_client_ignores_openai_base_url_env_without_explicit_base_url(self, mock_connect, mock_openai):
         os.environ['OPENAI_BASE_URL'] = 'http://127.0.0.1:9999/v1'
         os.environ.pop('HTTP_PROXY', None)
         os.environ.pop('HTTPS_PROXY', None)
 
         OpenAIClient('gpt-4.1-nano')
 
-        self.assertNotIn('OPENAI_BASE_URL', os.environ)
-        mock_openai.assert_called_once_with(api_key='test_openai_key')
-        mock_connect.assert_any_call('127.0.0.1', 9999)
+        self.assertEqual(os.environ.get('OPENAI_BASE_URL'), 'http://127.0.0.1:9999/v1')
+        mock_openai.assert_called_once_with(
+            api_key='test_openai_key',
+            base_url='https://api.openai.com/v1',
+        )
+        mock_connect.assert_not_called()
 
     @patch('llm_clients.openai._can_connect_to_host', return_value=False)
     def test_openai_client_raises_on_explicit_unreachable_local_base_url(self, mock_connect):

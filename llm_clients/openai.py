@@ -542,7 +542,7 @@ class OpenAIClient(LLMClient):
             )
 
         if not base_url:
-            _sanitize_connectivity_env_for_openai()
+            base_url = "https://api.openai.com/v1"
         else:
             host, port = _parse_host_port(base_url)
             if _is_local_host(host) and port is not None and not _can_connect_to_host(host, port):
@@ -551,9 +551,7 @@ class OpenAIClient(LLMClient):
                     user_message="OpenAI互換サーバに接続できません。先に対象サーバを起動してください。",
                 )
 
-        client_kwargs: Dict[str, str] = {"api_key": api_key}
-        if base_url:
-            client_kwargs["base_url"] = base_url
+        client_kwargs: Dict[str, str] = {"api_key": api_key, "base_url": base_url}
 
         self.client = OpenAI(**client_kwargs)
         self.model = model
