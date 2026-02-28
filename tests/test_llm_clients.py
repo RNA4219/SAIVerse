@@ -10,6 +10,7 @@ os.environ.setdefault('SAIVERSE_SKIP_TOOL_IMPORTS', '1')
 # テスト対象のモジュールをインポート
 import llm_clients
 from llm_clients import openai_errors
+from llm_clients import anthropic as anthropic_module
 from llm_clients import openai_runtime
 import tools as saiverse_tools
 from llm_clients import (
@@ -413,6 +414,73 @@ class TestLLMClients(unittest.TestCase):
         # Invalid effort should be ignored
         client.configure_parameters({"thinking_effort": "invalid"})
         self.assertIsNone(client._thinking_effort)
+
+    @patch('llm_clients.anthropic.Anthropic')
+    def test_anthropic_build_request_params_consistent_between_generate_and_stream(self, mock_anthropic):
+        mock_client_instance = MagicMock()
+        mock_anthropic.return_value = mock_client_instance
+
+        mock_response = MagicMock()
+        mock_response.usage = None
+        mock_text_block = MagicMock()
+        mock_text_block.type = "text"
+        mock_text_block.text = "ok"
+        mock_response.content = [mock_text_block]
+        mock_response.model_dump_json.return_value = '{}'
+        mock_client_instance.messages.create.return_value = mock_response
+
+        mock_stream = MagicMock()
+        mock_stream.__iter__.return_value = iter(())
+        stream_cm = MagicMock()
+        stream_cm.__enter__.return_value = mock_stream
+        stream_cm.__exit__.return_value = None
+        mock_client_instance.messages.stream.return_value = stream_cm
+
+        client = AnthropicClient(
+            "claude-sonnet-4-5",
+            config={"thinking_type": "adaptive", "thinking_effort": "high"},
+        )
+        client.configure_parameters({"top_p": 0.9, "top_k": 10})
+
+        messages = [
+            {"role": "system", "content": "system prompt"},
+            {"role": "user", "content": "hello"},
+        ]
+        tools = [{
+            "type": "function",
+            "function": {
+                "name": "test_tool",
+                "description": "test",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        }]
+
+        build_result = anthropic_module.build_request_params(
+            messages=messages,
+            tools=tools,
+            response_schema=None,
+            temperature=0.3,
+            enable_cache=True,
+            cache_ttl="5m",
+            model=client.model,
+            max_tokens=client._max_tokens,
+            extra_params=client._extra_params,
+            thinking_config=client._thinking_config,
+            thinking_effort=client._thinking_effort,
+            supports_images=client.supports_images,
+            max_image_bytes=client.max_image_bytes,
+        )
+
+        client.generate(messages, tools=tools, temperature=0.3, enable_cache=True, cache_ttl="5m")
+        list(client.generate_stream(messages, tools=tools, temperature=0.3, enable_cache=True, cache_ttl="5m"))
+
+        _, generate_kwargs = mock_client_instance.messages.create.call_args
+        _, stream_kwargs = mock_client_instance.messages.stream.call_args
+
+        self.assertEqual(generate_kwargs, build_result["request_params"])
+        self.assertEqual(stream_kwargs, build_result["request_params"])
+        self.assertTrue(build_result["use_tools"])
+        self.assertFalse(build_result["use_native_structured_output"])
 
     @patch('llm_clients.gemini.genai')
     def test_gemini_client_free_key_fallback(self, mock_genai):

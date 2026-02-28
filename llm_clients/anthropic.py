@@ -465,6 +465,94 @@ def _extract_tool_use_from_response(message: Message) -> Optional[Dict[str, Any]
             }
     return None
 
+def build_request_params(
+    messages: List[Dict[str, Any]],
+    tools: Optional[List[Any]],
+    response_schema: Optional[Dict[str, Any]],
+    temperature: Optional[float],
+    enable_cache: bool,
+    cache_ttl: str,
+    model: str,
+    max_tokens: int,
+    extra_params: Dict[str, Any],
+    thinking_config: Optional[Dict[str, Any]],
+    thinking_effort: Optional[str],
+    supports_images: bool,
+    max_image_bytes: Optional[int],
+) -> Dict[str, Any]:
+    """Build Anthropic request parameters and control flags."""
+    system_blocks, remaining_messages = _prepare_anthropic_system(
+        messages, enable_cache=enable_cache, cache_ttl=cache_ttl
+    )
+
+    prepared_messages = _prepare_anthropic_messages(
+        remaining_messages,
+        supports_images=supports_images,
+        max_image_bytes=max_image_bytes,
+        enable_cache=enable_cache,
+        cache_ttl=cache_ttl,
+    )
+
+    use_tools = bool(tools)
+    use_native_structured_output = False
+
+    request_params: Dict[str, Any] = {
+        "model": model,
+        "max_tokens": max_tokens,
+        "messages": prepared_messages,
+    }
+
+    if system_blocks:
+        request_params["system"] = system_blocks
+
+    if temperature is not None:
+        request_params["temperature"] = temperature
+    elif "temperature" in extra_params:
+        request_params["temperature"] = extra_params["temperature"]
+
+    for param in ("top_p", "top_k"):
+        if param in extra_params:
+            request_params[param] = extra_params[param]
+
+    if thinking_config:
+        request_params["thinking"] = thinking_config
+
+    if use_tools and tools:
+        request_params["tools"] = _prepare_anthropic_tools(
+            tools, enable_cache=enable_cache, cache_ttl=cache_ttl
+        )
+
+    output_config: Dict[str, Any] = {}
+    if thinking_effort:
+        output_config["effort"] = thinking_effort
+
+    if response_schema and not use_tools:
+        if thinking_config:
+            prepared_schema = _prepare_schema_for_native_output(response_schema)
+            output_config["format"] = {
+                "type": "json_schema",
+                "schema": prepared_schema,
+            }
+            use_native_structured_output = True
+        else:
+            schema_name = response_schema.get("title", "structured_output")
+            request_params["tools"] = [{
+                "name": schema_name,
+                "description": "Generate structured output according to the schema",
+                "input_schema": response_schema,
+            }]
+            request_params["tool_choice"] = {"type": "tool", "name": schema_name}
+
+    if output_config:
+        request_params["output_config"] = output_config
+
+    return {
+        "request_params": request_params,
+        "use_tools": use_tools,
+        "use_native_structured_output": use_native_structured_output,
+    }
+
+
 
 class AnthropicClient(LLMClient):
     """Native Anthropic Claude client with prompt caching support."""
@@ -638,85 +726,28 @@ class AnthropicClient(LLMClient):
         """
         self._store_reasoning([])
 
-        # Extract system messages
-        system_blocks, remaining_messages = _prepare_anthropic_system(
-            messages, enable_cache=enable_cache, cache_ttl=cache_ttl
-        )
-
-        # Prepare messages
-        prepared_messages = _prepare_anthropic_messages(
-            remaining_messages,
-            supports_images=self.supports_images,
-            max_image_bytes=self.max_image_bytes,
+        build_result = build_request_params(
+            messages=messages,
+            tools=tools,
+            response_schema=response_schema,
+            temperature=temperature,
             enable_cache=enable_cache,
             cache_ttl=cache_ttl,
+            model=self.model,
+            max_tokens=self._max_tokens,
+            extra_params=self._extra_params,
+            thinking_config=self._thinking_config,
+            thinking_effort=self._thinking_effort,
+            supports_images=self.supports_images,
+            max_image_bytes=self.max_image_bytes,
         )
+        request_params = build_result["request_params"]
+        use_tools = bool(build_result["use_tools"])
+        use_native_structured_output = bool(build_result["use_native_structured_output"])
 
-        if not prepared_messages:
+        if not request_params.get("messages"):
             logging.warning("[anthropic] No valid messages to send")
             return ""
-
-        # Build request parameters
-        request_params: Dict[str, Any] = {
-            "model": self.model,
-            "max_tokens": self._max_tokens,
-            "messages": prepared_messages,
-        }
-
-        if system_blocks:
-            request_params["system"] = system_blocks
-
-        if temperature is not None:
-            request_params["temperature"] = temperature
-        elif "temperature" in self._extra_params:
-            request_params["temperature"] = self._extra_params["temperature"]
-
-        # Apply other extra params (top_p, top_k)
-        for param in ("top_p", "top_k"):
-            if param in self._extra_params:
-                request_params[param] = self._extra_params[param]
-
-        # Add thinking configuration if set
-        if self._thinking_config:
-            request_params["thinking"] = self._thinking_config
-
-        # Handle tools
-        use_tools = bool(tools)
-        if use_tools:
-            request_params["tools"] = _prepare_anthropic_tools(
-                tools, enable_cache=enable_cache, cache_ttl=cache_ttl
-            )
-
-        # Build output_config (may contain effort and/or structured output format)
-        output_config: Dict[str, Any] = {}
-        if self._thinking_effort:
-            output_config["effort"] = self._thinking_effort
-
-        # Handle structured output
-        use_native_structured_output = False
-        if response_schema and not use_tools:
-            if self._thinking_config:
-                # Thinking enabled: use native output_config (compatible with thinking)
-                # Native structured output requires additionalProperties: false on all objects
-                prepared_schema = _prepare_schema_for_native_output(response_schema)
-                output_config["format"] = {
-                    "type": "json_schema",
-                    "schema": prepared_schema,
-                }
-                use_native_structured_output = True
-            else:
-                # No thinking: use tool_choice pattern (legacy, works on all models)
-                schema_name = response_schema.get("title", "structured_output")
-                request_params["tools"] = [{
-                    "name": schema_name,
-                    "description": "Generate structured output according to the schema",
-                    "input_schema": response_schema,
-                }]
-                request_params["tool_choice"] = {"type": "tool", "name": schema_name}
-
-        # Apply output_config if any fields were set (effort and/or format)
-        if output_config:
-            request_params["output_config"] = output_config
 
         response = None
         last_error: Optional[Exception] = None
@@ -860,58 +891,27 @@ class AnthropicClient(LLMClient):
                 yield str(result)
             return
 
-        # Extract system messages
-        system_blocks, remaining_messages = _prepare_anthropic_system(
-            messages, enable_cache=enable_cache, cache_ttl=cache_ttl
-        )
-
-        # Prepare messages
-        prepared_messages = _prepare_anthropic_messages(
-            remaining_messages,
-            supports_images=self.supports_images,
-            max_image_bytes=self.max_image_bytes,
+        build_result = build_request_params(
+            messages=messages,
+            tools=tools,
+            response_schema=None,
+            temperature=temperature,
             enable_cache=enable_cache,
             cache_ttl=cache_ttl,
+            model=self.model,
+            max_tokens=self._max_tokens,
+            extra_params=self._extra_params,
+            thinking_config=self._thinking_config,
+            thinking_effort=self._thinking_effort,
+            supports_images=self.supports_images,
+            max_image_bytes=self.max_image_bytes,
         )
+        request_params = build_result["request_params"]
+        use_tools = bool(build_result["use_tools"])
 
-        if not prepared_messages:
+        if not request_params.get("messages"):
             logging.warning("[anthropic] No valid messages to send")
             return
-
-        # Build request parameters
-        request_params: Dict[str, Any] = {
-            "model": self.model,
-            "max_tokens": self._max_tokens,
-            "messages": prepared_messages,
-        }
-
-        if system_blocks:
-            request_params["system"] = system_blocks
-
-        if temperature is not None:
-            request_params["temperature"] = temperature
-        elif "temperature" in self._extra_params:
-            request_params["temperature"] = self._extra_params["temperature"]
-
-        # Apply other extra params (top_p, top_k)
-        for param in ("top_p", "top_k"):
-            if param in self._extra_params:
-                request_params[param] = self._extra_params[param]
-
-        # Add thinking configuration if set
-        if self._thinking_config:
-            request_params["thinking"] = self._thinking_config
-
-        # Add effort parameter via output_config if configured
-        if self._thinking_effort:
-            request_params["output_config"] = {"effort": self._thinking_effort}
-
-        # Handle tools
-        use_tools = bool(tools)
-        if use_tools:
-            request_params["tools"] = _prepare_anthropic_tools(
-                tools, enable_cache=enable_cache, cache_ttl=cache_ttl
-            )
 
         last_error: Optional[Exception] = None
         stream_success = False
