@@ -840,27 +840,30 @@ class OpenAIClient(LLMClient):
             request_params["stream_options"] = {"include_usage": True}
         return request_params
 
-    def _parse_stream_chunk(self, delta: Any) -> Tuple[str, List[str], List[Dict[str, Any]]]:
+    def _parse_stream_chunk(self, delta: Any) -> Dict[str, Any]:
+        if delta.tool_calls:
+            return {
+                "kind": "tool_call",
+                "tool_calls": delta.tool_calls,
+                "text_fragment": "",
+                "reasoning": [],
+                "reasoning_details": [],
+            }
         extra_reasoning = _extract_reasoning_from_delta(delta)
         reasoning_details_raw = _extract_raw_reasoning_details_from_delta(delta)
         text_fragment = ""
         reasoning_piece: List[str] = []
         if delta.content:
             text_fragment, reasoning_piece = _process_openai_stream_content(delta.content)
-        return text_fragment, extra_reasoning + reasoning_piece, reasoning_details_raw
-
-    def _interpret_stream_chunk(self, *, delta: Any) -> Dict[str, Any]:
-        if delta.tool_calls:
-            return {"kind": "tool", "tool_calls": delta.tool_calls}
-        text_fragment, chunk_reasoning, chunk_reasoning_details = self._parse_stream_chunk(delta)
         return {
             "kind": "text",
+            "tool_calls": [],
             "text_fragment": text_fragment,
-            "reasoning": chunk_reasoning,
-            "reasoning_details": chunk_reasoning_details,
+            "reasoning": extra_reasoning + reasoning_piece,
+            "reasoning_details": reasoning_details_raw,
         }
 
-    def _finalize_stream_state(
+    def _finalize_stream_artifacts(
         self,
         *,
         last_chunk: Any,
@@ -1006,7 +1009,10 @@ class OpenAIClient(LLMClient):
                         if fr is not None:
                             last_finish_reason = fr
                     if chunk.choices and chunk.choices[0].delta:
-                        text_fragment, chunk_reasoning, chunk_reasoning_details = self._parse_stream_chunk(chunk.choices[0].delta)
+                        parsed = self._parse_stream_chunk(chunk.choices[0].delta)
+                        text_fragment = parsed["text_fragment"]
+                        chunk_reasoning = parsed["reasoning"]
+                        chunk_reasoning_details = parsed["reasoning_details"]
                         for r in chunk_reasoning:
                             reasoning_chunks.append(r)
                             yield {"type": "thinking", "content": r}
@@ -1024,7 +1030,7 @@ class OpenAIClient(LLMClient):
                         user_message="生成された内容がOpenAIのコンテンツフィルターによりブロックされました。入力内容を変更してお試しください。",
                     )
 
-                self._finalize_stream_state(
+                self._finalize_stream_artifacts(
                     last_chunk=last_chunk,
                     reasoning_chunks=reasoning_chunks,
                     reasoning_details_raw=reasoning_details_raw,
@@ -1088,10 +1094,10 @@ class OpenAIClient(LLMClient):
                 last_chunk = chunk
                 delta = chunk.choices[0].delta
 
-                interpreted = self._interpret_stream_chunk(delta=delta)
-                if interpreted["kind"] == "tool":
+                parsed = self._parse_stream_chunk(delta)
+                if parsed["kind"] == "tool_call":
                     state = "TOOL_CALL"
-                    for call in interpreted["tool_calls"]:
+                    for call in parsed["tool_calls"]:
                         tc_id = call.id or current_call_id
                         if tc_id is None:
                             logging.warning("tool_chunk without id; skipping")
@@ -1113,9 +1119,9 @@ class OpenAIClient(LLMClient):
                             buf["arguments"] += call.function.arguments
                     continue
 
-                text_fragment = interpreted["text_fragment"]
-                chunk_reasoning = interpreted["reasoning"]
-                chunk_reasoning_details = interpreted["reasoning_details"]
+                text_fragment = parsed["text_fragment"]
+                chunk_reasoning = parsed["reasoning"]
+                chunk_reasoning_details = parsed["reasoning_details"]
                 for r in chunk_reasoning:
                     reasoning_chunks.append(r)
                     yield {"type": "thinking", "content": r}
@@ -1127,7 +1133,7 @@ class OpenAIClient(LLMClient):
                         prefix_yielded = True
                     yield text_fragment
 
-            self._finalize_stream_state(
+            self._finalize_stream_artifacts(
                 last_chunk=last_chunk,
                 reasoning_chunks=reasoning_chunks,
                 reasoning_details_raw=reasoning_details_raw,
@@ -1139,7 +1145,7 @@ class OpenAIClient(LLMClient):
             raise
         except Exception as e:
             logging.exception("OpenAI stream call failed")
-            raise _convert_to_llm_error(e, "streaming call")
+            raise _convert_to_llm_error(e, "streaming API call")
 
     def configure_parameters(self, parameters: Dict[str, Any] | None) -> None:
         if not isinstance(parameters, dict):
