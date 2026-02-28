@@ -1,5 +1,6 @@
 import unittest
-from unittest.mock import patch, MagicMock
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 import os
 import json
 from typing import List, Dict, Iterator
@@ -19,6 +20,7 @@ from llm_clients import (
     get_llm_client,
     OPENAI_TOOLS_SPEC,
 )
+from llm_clients.exceptions import AuthenticationError, PaymentError
 
 if not saiverse_tools.OPENAI_TOOLS_SPEC:
     saiverse_tools._autodiscover_tools()
@@ -235,6 +237,145 @@ class TestLLMClients(unittest.TestCase):
         response_generator = client.generate_stream(messages, tools=[])
 
         self.assertEqual(list(response_generator), ["Stream ", "test"])
+
+    @patch('llm_clients.openai.time.sleep')
+    @patch('llm_clients.openai.OpenAI')
+    def test_openai_client_generate_retries_until_max_for_retryable_errors(self, mock_openai, mock_sleep):
+        mock_client_instance = MagicMock()
+        mock_openai.return_value = mock_client_instance
+
+        mock_resp = MagicMock()
+        mock_resp.usage.prompt_tokens = 10
+        mock_resp.usage.completion_tokens = 5
+        mock_resp.usage.prompt_tokens_details = None
+        mock_resp.model_dump_json.return_value = '{}'
+        mock_choice = MagicMock()
+        mock_choice.message.content = "retry ok"
+        mock_choice.finish_reason = "stop"
+        mock_resp.choices = [mock_choice]
+
+        mock_client_instance.chat.completions.create.side_effect = [
+            Exception("429 rate limit"),
+            Exception("503 unavailable"),
+            mock_resp,
+        ]
+
+        client = OpenAIClient("gpt-4.1-nano")
+        response = client.generate([{"role": "user", "content": "Hello"}], tools=[])
+
+        self.assertEqual(response, "retry ok")
+        self.assertEqual(mock_client_instance.chat.completions.create.call_count, 3)
+        self.assertEqual(mock_sleep.call_count, 2)
+
+    @patch('llm_clients.openai.OpenAI')
+    def test_openai_client_generate_no_retry_for_auth_or_payment_errors(self, mock_openai):
+        mock_client_instance = MagicMock()
+        mock_openai.return_value = mock_client_instance
+        client = OpenAIClient("gpt-4.1-nano")
+
+        for raw_error, expected in [
+            (Exception("401 invalid api key"), AuthenticationError),
+            (Exception("402 payment required"), PaymentError),
+        ]:
+            with self.subTest(error=str(raw_error)):
+                mock_client_instance.chat.completions.create.reset_mock()
+                mock_client_instance.chat.completions.create.side_effect = raw_error
+                with self.assertRaises(expected):
+                    client.generate([{"role": "user", "content": "Hello"}], tools=[])
+                self.assertEqual(mock_client_instance.chat.completions.create.call_count, 1)
+
+    @patch('llm_clients.openai.OpenAI')
+    def test_openai_client_generate_return_format_compat_with_and_without_tool_call(self, mock_openai):
+        mock_client_instance = MagicMock()
+        mock_openai.return_value = mock_client_instance
+        client = OpenAIClient("gpt-4.1-nano")
+
+        non_tool_resp = MagicMock()
+        non_tool_resp.usage.prompt_tokens = 1
+        non_tool_resp.usage.completion_tokens = 1
+        non_tool_resp.usage.prompt_tokens_details = None
+        non_tool_resp.model_dump_json.return_value = '{}'
+        non_tool_choice = MagicMock()
+        non_tool_choice.message.content = "plain"
+        non_tool_choice.finish_reason = "stop"
+        non_tool_resp.choices = [non_tool_choice]
+        mock_client_instance.chat.completions.create.return_value = non_tool_resp
+        plain = client.generate([{"role": "user", "content": "Hello"}], tools=[])
+        self.assertIsInstance(plain, str)
+        self.assertEqual(plain, "plain")
+
+        tool_resp = MagicMock()
+        tool_resp.usage.prompt_tokens = 1
+        tool_resp.usage.completion_tokens = 1
+        tool_resp.usage.prompt_tokens_details = None
+        tool_resp.model_dump_json.return_value = '{}'
+        tool_choice = MagicMock()
+        tool_choice.finish_reason = "tool_calls"
+        tool_choice.message.content = ""
+        tool_choice.message.tool_calls = [
+            SimpleNamespace(
+                function=SimpleNamespace(name="test_tool", arguments='{"x": 1}'),
+            )
+        ]
+        tool_resp.choices = [tool_choice]
+        mock_client_instance.chat.completions.create.return_value = tool_resp
+        with_tool = client.generate([{"role": "user", "content": "Hello"}], tools=OPENAI_TOOLS_SPEC)
+        self.assertEqual(with_tool["type"], "tool_call")
+        self.assertEqual(with_tool["tool_name"], "test_tool")
+        self.assertEqual(with_tool["tool_args"], {"x": 1})
+
+    @patch('llm_clients.openai.OpenAI')
+    def test_openai_client_generate_stream_keeps_text_order_and_stores_reasoning_and_usage(self, mock_openai):
+        mock_client_instance = MagicMock()
+        mock_openai.return_value = mock_client_instance
+
+        chunk1 = MagicMock()
+        chunk1.usage = None
+        delta1 = MagicMock()
+        delta1.content = "A"
+        delta1.tool_calls = None
+        delta1.model_dump.return_value = {"reasoning_content": "r1"}
+        chunk1.choices = [SimpleNamespace(delta=delta1, finish_reason=None)]
+
+        chunk2 = MagicMock()
+        chunk2.usage = None
+        delta2 = MagicMock()
+        delta2.content = "B"
+        delta2.tool_calls = None
+        delta2.model_dump.return_value = {"reasoning_content": "r2"}
+        chunk2.choices = [SimpleNamespace(delta=delta2, finish_reason=None)]
+
+        chunk3 = MagicMock()
+        chunk3.usage = SimpleNamespace(
+            prompt_tokens=21,
+            completion_tokens=34,
+            prompt_tokens_details=SimpleNamespace(cached_tokens=5),
+        )
+        delta3 = MagicMock()
+        delta3.content = "C"
+        delta3.tool_calls = None
+        delta3.model_dump.return_value = {}
+        chunk3.choices = [SimpleNamespace(delta=delta3, finish_reason="stop")]
+
+        mock_client_instance.chat.completions.create.return_value = [chunk1, chunk2, chunk3]
+
+        client = OpenAIClient("gpt-4.1-nano")
+        outputs = list(client.generate_stream([{"role": "user", "content": "Hello"}], tools=[]))
+
+        text_parts = [item for item in outputs if isinstance(item, str)]
+        thinking_parts = [item for item in outputs if isinstance(item, dict) and item.get("type") == "thinking"]
+        self.assertEqual("".join(text_parts), "ABC")
+        self.assertEqual([t["content"] for t in thinking_parts], ["r1", "r2"])
+
+        stored_reasoning = client.consume_reasoning()
+        self.assertEqual(stored_reasoning, [{"title": "", "text": "r1r2"}])
+
+        usage = client.consume_usage()
+        self.assertIsNotNone(usage)
+        assert usage is not None
+        self.assertEqual(usage.input_tokens, 21)
+        self.assertEqual(usage.output_tokens, 34)
+        self.assertEqual(usage.cached_tokens, 5)
 
     @patch('llm_clients.gemini.genai')
     def test_gemini_client_generate(self, mock_genai):
