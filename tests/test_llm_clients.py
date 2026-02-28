@@ -377,6 +377,49 @@ class TestLLMClients(unittest.TestCase):
         self.assertEqual(usage.output_tokens, 34)
         self.assertEqual(usage.cached_tokens, 5)
 
+    @patch('llm_clients.openai.OpenAI')
+    def test_openai_client_generate_stream_stores_usage_only_after_stream_finishes(self, mock_openai):
+        mock_client_instance = MagicMock()
+        mock_openai.return_value = mock_client_instance
+
+        chunk1 = MagicMock()
+        chunk1.usage = None
+        delta1 = MagicMock()
+        delta1.content = "first"
+        delta1.tool_calls = None
+        delta1.model_dump.return_value = {}
+        chunk1.choices = [SimpleNamespace(delta=delta1, finish_reason=None)]
+
+        chunk2 = MagicMock()
+        chunk2.usage = SimpleNamespace(
+            prompt_tokens=8,
+            completion_tokens=13,
+            prompt_tokens_details=SimpleNamespace(cached_tokens=2),
+        )
+        delta2 = MagicMock()
+        delta2.content = "second"
+        delta2.tool_calls = None
+        delta2.model_dump.return_value = {}
+        chunk2.choices = [SimpleNamespace(delta=delta2, finish_reason="stop")]
+
+        mock_client_instance.chat.completions.create.return_value = [chunk1, chunk2]
+
+        client = OpenAIClient("gpt-4.1-nano")
+        stream = client.generate_stream([{"role": "user", "content": "Hello"}], tools=[])
+
+        self.assertEqual(next(stream), "first")
+        self.assertIsNone(client.consume_usage())
+        self.assertEqual(next(stream), "second")
+        with self.assertRaises(StopIteration):
+            next(stream)
+
+        usage = client.consume_usage()
+        self.assertIsNotNone(usage)
+        assert usage is not None
+        self.assertEqual(usage.input_tokens, 8)
+        self.assertEqual(usage.output_tokens, 13)
+        self.assertEqual(usage.cached_tokens, 2)
+
     @patch('llm_clients.gemini.genai')
     def test_gemini_client_generate(self, mock_genai):
         mock_client_instance = MagicMock()
