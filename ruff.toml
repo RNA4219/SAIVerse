@@ -25,6 +25,8 @@ exclude = [
 select = [
     "F",      # Pyflakes - catches undefined names, unused imports, etc.
     "E9",     # Runtime errors (syntax errors, etc.)
+    "I",      # isort - import ordering (phased rollout)
+    "B",      # flake8-bugbear (phased rollout)
 ]
 
 # Rules to ignore (can be adjusted as codebase improves)
@@ -38,3 +40,25 @@ ignore = [
 [lint.per-file-ignores]
 "__init__.py" = ["F401"]  # Unused imports OK in __init__.py
 "tools/defs/*.py" = ["F401"]  # Tool definitions may have unused imports
+
+# 段階導入方針（新規コード優先）:
+# - 既存コードへの影響が大きいディレクトリのみ、I/B を限定的に緩和する。
+# - 新規ファイル・新規モジュールには本緩和を適用しない。
+# - 既存ファイルを本格改修する際は、対象ファイルの緩和設定を個別に外す。
+"api/**/*.py" = ["I", "B"]
+"builtin_data/**/*.py" = ["I", "B"]
+"database/**/*.py" = ["I", "B"]
+"llm_clients/**/*.py" = ["I", "B"]
+"manager/**/*.py" = ["I", "B"]
+"persona/**/*.py" = ["I", "B"]
+"phenomena/**/*.py" = ["I", "B"]
+"sai_memory/**/*.py" = ["I", "B"]
+"saiverse/**/*.py" = ["I", "B"]
+"saiverse_memory/**/*.py" = ["I", "B"]
+"scripts/**/*.py" = ["I", "B"]
+"sea/**/*.py" = ["I", "B"]
+"tests/**/*.py" = ["I", "B"]
+"tools/**/*.py" = ["I", "B"]
+"unity_gateway/**/*.py" = ["I", "B"]
+"main.py" = ["I", "B"]
+"sds_server.py" = ["I", "B"]
