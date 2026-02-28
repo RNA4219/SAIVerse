@@ -504,6 +504,206 @@ class OpenAIClient(LLMClient):
             logging.info("[openai] Tool[%d]: %s", i, tool)
         return self._generate_tool_detection(messages, tools_spec, temperature=temperature)
 
+    def _resolve_tool_choice(
+        self,
+        *,
+        force_tool_choice: Optional[dict | str],
+        tools: Optional[list],
+        tools_spec: list,
+        messages: List[Dict[str, Any]],
+    ) -> dict | str:
+        if force_tool_choice is not None:
+            return force_tool_choice
+        if tools is not None:
+            return "auto"
+        user_msg = next((m["content"] for m in reversed(messages) if m.get("role") == "user"), "")
+        decision = route(user_msg, tools_spec)
+        logging.info("Router decision:\n%s", json.dumps(decision, indent=2, ensure_ascii=False))
+        if decision["call"] == "yes" and decision["tool"]:
+            return {"type": "function", "function": {"name": decision["tool"]}}
+        return "auto"
+
+    def _store_stream_tool_detection_from_buffer(self, call_buffer: Dict[str, Dict[str, str]]) -> None:
+        if not call_buffer:
+            self._store_tool_detection({"type": "text", "content": ""})
+            return
+
+        logging.debug("call_buffer final: %s", json.dumps(call_buffer, indent=2, ensure_ascii=False))
+        first_tc = next(iter(call_buffer.values()), None)
+        if not first_tc:
+            self._store_tool_detection({"type": "text", "content": ""})
+            return
+
+        name = first_tc["name"].strip()
+        arg_str = first_tc["arguments"].strip()
+        if not name or not arg_str:
+            logging.warning("tool_call has empty name or arguments; not storing")
+            self._store_tool_detection({"type": "text", "content": ""})
+            return
+
+        try:
+            args = json.loads(arg_str)
+        except json.JSONDecodeError:
+            logging.warning(
+                "tool_call arguments invalid JSON; fallback to empty object. raw=%s",
+                arg_str,
+            )
+            args = {}
+
+        self._store_tool_detection({
+            "type": "tool_call",
+            "tool_name": name,
+            "tool_args": args,
+            "raw_tool_call": first_tc,
+        })
+        logging.info("[openai] Tool detection stored: %s", name)
+
+    def _stream_text_mode(
+        self,
+        *,
+        resp: Any,
+        history_snippets: List[str],
+        req_kwargs: Dict[str, Any],
+        response_schema: Optional[Dict[str, Any]],
+        reasoning_chunks: List[str],
+    ) -> Iterator[str]:
+        if req_kwargs.get("stream"):
+            last_chunk = None
+            last_finish_reason = None
+            reasoning_details_raw: List[Dict[str, Any]] = []
+            prefix_yielded = False
+
+            for chunk in resp:
+                last_chunk = chunk
+                if chunk.choices and chunk.choices[0]:
+                    fr = chunk.choices[0].finish_reason
+                    if fr is not None:
+                        last_finish_reason = fr
+                if not chunk.choices or not chunk.choices[0].delta:
+                    continue
+
+                delta = chunk.choices[0].delta
+                extra_reasoning = extract_reasoning_from_delta(delta)
+                for r in extra_reasoning:
+                    reasoning_chunks.append(r)
+                    yield {"type": "thinking", "content": r}
+
+                reasoning_details_raw.extend(extract_raw_reasoning_details_from_delta(delta))
+
+                content = delta.content
+                if not content:
+                    continue
+                text_fragment, reasoning_piece = process_openai_stream_content(content)
+                for r in reasoning_piece:
+                    reasoning_chunks.append(r)
+                    yield {"type": "thinking", "content": r}
+                if not text_fragment:
+                    continue
+                if not prefix_yielded and history_snippets:
+                    yield "\n".join(history_snippets) + "\n"
+                    prefix_yielded = True
+                yield text_fragment
+
+            if last_finish_reason == "content_filter":
+                logging.warning("[openai] Stream output blocked by content filter. finish_reason=%s", last_finish_reason)
+                openai_runtime.raise_content_filter_error(context="output")
+
+            openai_runtime.store_usage_from_last_chunk(
+                last_chunk,
+                lambda i, o, c: self._store_usage(input_tokens=i, output_tokens=o, cached_tokens=c),
+            )
+            self._store_reasoning(merge_reasoning_strings(reasoning_chunks))
+            if reasoning_details_raw:
+                self._store_reasoning_details(merge_streaming_reasoning_details(reasoning_details_raw))
+            return
+
+        choice = resp.choices[0]
+        if choice.finish_reason == "content_filter":
+            logging.warning("[openai] Output blocked by content filter. finish_reason=%s", choice.finish_reason)
+            openai_runtime.raise_content_filter_error(context="output")
+
+        text_body, reasoning_entries, reasoning_details = extract_reasoning_from_message(choice.message)
+        if not text_body:
+            text_body = choice.message.content or ""
+        self._store_reasoning(reasoning_entries)
+        self._store_reasoning_details(reasoning_details)
+        prefix = "\n".join(history_snippets) + ("\n" if history_snippets and text_body else "")
+        if prefix:
+            yield prefix
+        if text_body:
+            yield text_body
+
+    def _stream_tool_mode(
+        self,
+        *,
+        resp: Any,
+        history_snippets: List[str],
+        reasoning_chunks: List[str],
+    ) -> Iterator[str]:
+        call_buffer: Dict[str, Dict[str, str]] = {}
+        state = "TEXT"
+        prefix_yielded = False
+        reasoning_details_raw: List[Dict[str, Any]] = []
+        current_call_id: Optional[str] = None
+        last_chunk = None
+
+        for chunk in resp:
+            last_chunk = chunk
+            delta = chunk.choices[0].delta
+
+            if delta.tool_calls:
+                state = "TOOL_CALL"
+                for call in delta.tool_calls:
+                    tc_id = call.id or current_call_id
+                    if tc_id is None:
+                        logging.warning("tool_chunk without id; skipping")
+                        continue
+                    current_call_id = tc_id
+                    buf = call_buffer.setdefault(tc_id, {"id": tc_id, "name": "", "arguments": ""})
+                    logging.debug(
+                        "tool_chunk id=%s name=%s args_part=%s",
+                        tc_id,
+                        call.function.name or "-",
+                        call.function.arguments or "-",
+                    )
+                    if call.function.name:
+                        buf["name"] = call.function.name
+                    if call.function.arguments:
+                        buf["arguments"] += call.function.arguments
+                continue
+
+            if state == "TEXT" and delta.content:
+                text_fragment, reasoning_piece = process_openai_stream_content(delta.content)
+                for r in reasoning_piece:
+                    reasoning_chunks.append(r)
+                    yield {"type": "thinking", "content": r}
+                extra_reasoning = extract_reasoning_from_delta(delta)
+                for r in extra_reasoning:
+                    reasoning_chunks.append(r)
+                    yield {"type": "thinking", "content": r}
+                if not text_fragment:
+                    continue
+                if not prefix_yielded and history_snippets:
+                    yield "\n".join(history_snippets) + "\n"
+                    prefix_yielded = True
+                yield text_fragment
+                continue
+
+            additional_reasoning = extract_reasoning_from_delta(delta)
+            for r in additional_reasoning:
+                reasoning_chunks.append(r)
+                yield {"type": "thinking", "content": r}
+            reasoning_details_raw.extend(extract_raw_reasoning_details_from_delta(delta))
+
+        openai_runtime.store_usage_from_last_chunk(
+            last_chunk,
+            lambda i, o, c: self._store_usage(input_tokens=i, output_tokens=o, cached_tokens=c),
+        )
+        self._store_reasoning(merge_reasoning_strings(reasoning_chunks))
+        if reasoning_details_raw:
+            self._store_reasoning_details(merge_streaming_reasoning_details(reasoning_details_raw))
+        self._store_stream_tool_detection_from_buffer(call_buffer)
+
     def generate_stream(
         self,
         messages: List[Dict[str, Any]],
@@ -526,7 +726,6 @@ class OpenAIClient(LLMClient):
         self._store_reasoning([])
         reasoning_chunks: List[str] = []
 
-        # If json_object mode, inject schema into messages as a system instruction
         effective_messages = messages
         if response_schema and self.structured_output_mode == "json_object":
             effective_messages = self._inject_schema_prompt(messages, response_schema)
@@ -563,88 +762,21 @@ class OpenAIClient(LLMClient):
                 logging.exception("OpenAI call failed")
                 raise _convert_to_llm_error(e, "streaming")
 
-            # Handle streaming vs non-streaming response
-            if req_kwargs.get("stream"):
-                # Streaming mode: iterate over chunks
-                prefix = "\n".join(history_snippets)
-                if prefix:
-                    yield prefix + "\n"
-                last_chunk = None
-                last_finish_reason = None
-                reasoning_details_raw: List[Dict[str, Any]] = []
-                for chunk in resp:
-                    last_chunk = chunk
-                    if chunk.choices and chunk.choices[0]:
-                        fr = chunk.choices[0].finish_reason
-                        if fr is not None:
-                            last_finish_reason = fr
-                    if chunk.choices and chunk.choices[0].delta:
-                        delta = chunk.choices[0].delta
-
-                        # Extract reasoning from delta attributes
-                        extra_reasoning = extract_reasoning_from_delta(delta)
-                        for r in extra_reasoning:
-                            reasoning_chunks.append(r)
-                            yield {"type": "thinking", "content": r}
-
-                        # Collect raw reasoning_details objects for multi-turn passback
-                        reasoning_details_raw.extend(extract_raw_reasoning_details_from_delta(delta))
-
-                        content = delta.content
-                        if content:
-                            # Check for reasoning in structured content (list with type="reasoning")
-                            text_fragment, reasoning_piece = process_openai_stream_content(content)
-                            for r in reasoning_piece:
-                                reasoning_chunks.append(r)
-                                yield {"type": "thinking", "content": r}
-                            if text_fragment:
-                                yield text_fragment
-                # Check for content filter in streaming
-                if last_finish_reason == "content_filter":
-                    logging.warning("[openai] Stream output blocked by content filter. finish_reason=%s", last_finish_reason)
-                    openai_runtime.raise_content_filter_error(context="output")
-
-                openai_runtime.store_usage_from_last_chunk(
-                    last_chunk,
-                    lambda i, o, c: self._store_usage(input_tokens=i, output_tokens=o, cached_tokens=c),
-                )
-                # Store reasoning collected during streaming
-                self._store_reasoning(merge_reasoning_strings(reasoning_chunks))
-                # Store reasoning_details for multi-turn pass-back (structured objects only)
-                if reasoning_details_raw:
-                    self._store_reasoning_details(merge_streaming_reasoning_details(reasoning_details_raw))
-            else:
-                # Non-streaming mode (response_schema case)
-                choice = resp.choices[0]
-                text_body, reasoning_entries, reasoning_details = extract_reasoning_from_message(choice.message)
-                if not text_body:
-                    text_body = choice.message.content or ""
-                self._store_reasoning(reasoning_entries)
-                self._store_reasoning_details(reasoning_details)
-                prefix = "\n".join(history_snippets) + ("\n" if history_snippets and text_body else "")
-                if prefix:
-                    yield prefix
-                if text_body:
-                    yield text_body
+            yield from self._stream_text_mode(
+                resp=resp,
+                history_snippets=history_snippets,
+                req_kwargs=req_kwargs,
+                response_schema=response_schema,
+                reasoning_chunks=reasoning_chunks,
+            )
             return
 
-        if force_tool_choice is None:
-            if tools is not None:
-                # Explicit tools from runtime — let LLM decide natively
-                force_tool_choice = "auto"
-            else:
-                # Legacy mode (tools=None → OPENAI_TOOLS_SPEC) — use router
-                user_msg = next((m["content"] for m in reversed(messages)
-                                 if m.get("role") == "user"), "")
-                decision = route(user_msg, tools_spec)
-                logging.info("Router decision:\n%s", json.dumps(decision, indent=2, ensure_ascii=False))
-                if decision["call"] == "yes" and decision["tool"]:
-                    force_tool_choice = {
-                        "type": "function",
-                        "function": {"name": decision["tool"]}
-                    }
-                else:
-                    force_tool_choice = "auto"
+        force_tool_choice = self._resolve_tool_choice(
+            force_tool_choice=force_tool_choice,
+            tools=tools,
+            tools_spec=tools_spec,
+            messages=messages,
+        )
 
         stream_req_kwargs = dict(self._request_kwargs)
         stream_req_kwargs["stream_options"] = {"include_usage": True}
@@ -667,119 +799,17 @@ class OpenAIClient(LLMClient):
             logging.exception("OpenAI call failed")
             raise _convert_to_llm_error(e, "JSON mode call")
 
-        call_buffer: dict[str, dict] = {}
-        state = "TEXT"
-        prefix_yielded = False
-        reasoning_details_raw: List[Dict[str, Any]] = []
-
         try:
-            current_call_id = None
-            last_chunk = None
-
-            for chunk in resp:
-                last_chunk = chunk
-                delta = chunk.choices[0].delta
-
-                if delta.tool_calls:
-                    state = "TOOL_CALL"
-                    for call in delta.tool_calls:
-                        tc_id = call.id or current_call_id
-                        if tc_id is None:
-                            logging.warning("tool_chunk without id; skipping")
-                            continue
-                        current_call_id = tc_id
-
-                        buf = call_buffer.setdefault(tc_id, {
-                            "id": tc_id,
-                            "name": "",
-                            "arguments": "",
-                        })
-
-                        logging.debug("tool_chunk id=%s name=%s args_part=%s",
-                                      tc_id, call.function.name or "-", call.function.arguments or "-")
-
-                        if call.function.name:
-                            buf["name"] = call.function.name
-                        if call.function.arguments:
-                            buf["arguments"] += call.function.arguments
-                    continue
-
-                if state == "TEXT" and delta.content:
-                    text_fragment, reasoning_piece = process_openai_stream_content(delta.content)
-                    for r in reasoning_piece:
-                        reasoning_chunks.append(r)
-                        yield {"type": "thinking", "content": r}
-                    extra_reasoning = extract_reasoning_from_delta(delta)
-                    for r in extra_reasoning:
-                        reasoning_chunks.append(r)
-                        yield {"type": "thinking", "content": r}
-                    if not text_fragment:
-                        continue
-                    if not prefix_yielded and history_snippets:
-                        yield "\n".join(history_snippets) + "\n"
-                        prefix_yielded = True
-                    yield text_fragment
-                    continue
-
-                additional_reasoning = extract_reasoning_from_delta(delta)
-                for r in additional_reasoning:
-                    reasoning_chunks.append(r)
-                    yield {"type": "thinking", "content": r}
-
-                # Collect raw reasoning_details objects for multi-turn passback
-                reasoning_details_raw.extend(extract_raw_reasoning_details_from_delta(delta))
-
-            openai_runtime.store_usage_from_last_chunk(
-                last_chunk,
-                lambda i, o, c: self._store_usage(input_tokens=i, output_tokens=o, cached_tokens=c),
+            yield from self._stream_tool_mode(
+                resp=resp,
+                history_snippets=history_snippets,
+                reasoning_chunks=reasoning_chunks,
             )
-
-            # Store reasoning
-            self._store_reasoning(merge_reasoning_strings(reasoning_chunks))
-            # Store reasoning_details for multi-turn pass-back (structured objects only)
-            if reasoning_details_raw:
-                self._store_reasoning_details(merge_streaming_reasoning_details(reasoning_details_raw))
-
-            # Store tool detection result if tool calls were detected
-            if call_buffer:
-                logging.debug("call_buffer final: %s", json.dumps(call_buffer, indent=2, ensure_ascii=False))
-                # Get the first tool call (for now, only support single tool call)
-                first_tc = next(iter(call_buffer.values()), None)
-                if first_tc:
-                    name = first_tc["name"].strip()
-                    arg_str = first_tc["arguments"].strip()
-
-                    if name and arg_str:
-                        try:
-                            args = json.loads(arg_str)
-                        except json.JSONDecodeError:
-                            logging.warning("tool_call arguments invalid JSON: %s", arg_str)
-                            args = {}
-
-                        # Collect all text that was yielded (approximation)
-                        # Note: We don't have a perfect way to collect yielded text here,
-                        # but in most cases tool_call doesn't come with text
-                        self._store_tool_detection({
-                            "type": "tool_call",
-                            "tool_name": name,
-                            "tool_args": args,
-                            "raw_tool_call": first_tc,
-                        })
-                        logging.info("[openai] Tool detection stored: %s", name)
-                    else:
-                        logging.warning("tool_call has empty name or arguments; not storing")
-                        self._store_tool_detection({"type": "text", "content": ""})
-            else:
-                # No tool call - store text-only result
-                self._store_tool_detection({"type": "text", "content": ""})
-
         except LLMError:
-            # Re-raise LLMError subclasses directly
             raise
         except Exception as e:
             logging.exception("OpenAI stream call failed")
             raise _convert_to_llm_error(e, "streaming call")
-
     def configure_parameters(self, parameters: Dict[str, Any] | None) -> None:
         if not isinstance(parameters, dict):
             return
