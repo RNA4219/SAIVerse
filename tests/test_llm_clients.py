@@ -20,7 +20,7 @@ from llm_clients import (
     get_llm_client,
     OPENAI_TOOLS_SPEC,
 )
-from llm_clients.exceptions import AuthenticationError, PaymentError
+from llm_clients.exceptions import AuthenticationError, InvalidRequestError, PaymentError
 
 if not saiverse_tools.OPENAI_TOOLS_SPEC:
     saiverse_tools._autodiscover_tools()
@@ -88,6 +88,26 @@ class TestLLMClients(unittest.TestCase):
             api_key='test_nim_key',
             base_url='https://integrate.api.nvidia.com/v1'
         )
+
+    @patch('llm_clients.openai.OpenAI')
+    @patch('llm_clients.openai._can_connect_to_host', return_value=False)
+    def test_openai_client_removes_dead_local_openai_base_url_env(self, mock_connect, mock_openai):
+        os.environ['OPENAI_BASE_URL'] = 'http://127.0.0.1:9999/v1'
+        os.environ.pop('HTTP_PROXY', None)
+        os.environ.pop('HTTPS_PROXY', None)
+
+        OpenAIClient('gpt-4.1-nano')
+
+        self.assertNotIn('OPENAI_BASE_URL', os.environ)
+        mock_openai.assert_called_once_with(api_key='test_openai_key')
+        mock_connect.assert_any_call('127.0.0.1', 9999)
+
+    @patch('llm_clients.openai._can_connect_to_host', return_value=False)
+    def test_openai_client_raises_on_explicit_unreachable_local_base_url(self, mock_connect):
+        with self.assertRaises(InvalidRequestError):
+            OpenAIClient('gpt-4.1-nano', base_url='http://127.0.0.1:8081/v1')
+
+        mock_connect.assert_called_once_with('127.0.0.1', 8081)
 
     @patch('llm_clients.openai.OpenAI')
     def test_openai_client_generate(self, mock_openai):

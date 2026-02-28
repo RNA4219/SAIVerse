@@ -6,7 +6,9 @@ import json
 import logging
 import mimetypes
 import os
+import socket
 import time
+from urllib.parse import urlparse
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 import openai
@@ -41,6 +43,61 @@ from .utils import (
 # Retry configuration
 MAX_RETRIES = 3
 INITIAL_BACKOFF = 1.0  # seconds
+
+
+def _can_connect_to_host(host: str, port: int, timeout: float = 0.2) -> bool:
+    try:
+        with socket.create_connection((host, port), timeout=timeout):
+            return True
+    except OSError:
+        return False
+
+
+def _parse_host_port(url: str) -> tuple[Optional[str], Optional[int]]:
+    parsed = urlparse(url)
+    if not parsed.hostname:
+        return None, None
+    if parsed.port:
+        return parsed.hostname, parsed.port
+    return parsed.hostname, 443 if parsed.scheme == "https" else 80
+
+
+def _is_local_host(host: Optional[str]) -> bool:
+    if not host:
+        return False
+    return host in {"localhost", "127.0.0.1", "::1"}
+
+
+def _sanitize_connectivity_env_for_openai() -> None:
+    base = os.getenv("OPENAI_BASE_URL")
+    if isinstance(base, str) and base.strip():
+        host, port = _parse_host_port(base.strip())
+        if _is_local_host(host) and port is not None and not _can_connect_to_host(host, port):
+            os.environ.pop("OPENAI_BASE_URL", None)
+            logging.warning("[openai] removed dead OPENAI_BASE_URL host=%s port=%s", host, port)
+
+    for proxy_key in ("HTTP_PROXY", "HTTPS_PROXY"):
+        proxy = os.getenv(proxy_key)
+        if not isinstance(proxy, str) or not proxy.strip():
+            continue
+        host, port = _parse_host_port(proxy.strip())
+        if host is None or port is None:
+            continue
+        if _is_local_host(host) or not _can_connect_to_host(host, port):
+            os.environ.pop(proxy_key, None)
+            logging.warning("[openai] removed unusable %s host=%s port=%s", proxy_key, host, port)
+
+
+def _log_openai_target(client: Any) -> None:
+    try:
+        base_url_value = str(getattr(client, "base_url", "") or "")
+        if not base_url_value:
+            base_url_value = str(os.getenv("OPENAI_BASE_URL", "") or "")
+        host, port = _parse_host_port(base_url_value)
+        if host and port:
+            logging.error("[openai] connect target host=%s port=%s", host, port)
+    except Exception:
+        logging.debug("[openai] failed to log connect target", exc_info=True)
 
 
 def _is_rate_limit_error(err: Exception) -> bool:
@@ -482,6 +539,16 @@ class OpenAIClient(LLMClient):
                 user_message="OpenAI APIキーが設定されていません。管理者にお問い合わせください。"
             )
 
+        if not base_url:
+            _sanitize_connectivity_env_for_openai()
+        else:
+            host, port = _parse_host_port(base_url)
+            if _is_local_host(host) and port is not None and not _can_connect_to_host(host, port):
+                raise InvalidRequestError(
+                    f"OpenAI compatible endpoint is unreachable: host={host} port={port}",
+                    user_message="OpenAI互換サーバに接続できません。先に対象サーバを起動してください。",
+                )
+
         client_kwargs: Dict[str, str] = {"api_key": api_key}
         if base_url:
             client_kwargs["base_url"] = base_url
@@ -643,6 +710,7 @@ class OpenAIClient(LLMClient):
                 break
             except Exception as e:
                 last_error = e
+                _log_openai_target(self.client)
                 if _should_retry(e) and attempt < MAX_RETRIES - 1:
                     backoff = INITIAL_BACKOFF * (2 ** attempt)
                     logging.warning(
@@ -1144,6 +1212,7 @@ class OpenAIClient(LLMClient):
             # Re-raise LLMError subclasses directly
             raise
         except Exception as e:
+            _log_openai_target(self.client)
             logging.exception("OpenAI stream call failed")
             raise _convert_to_llm_error(e, "streaming API call")
 
