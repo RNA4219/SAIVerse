@@ -91,8 +91,6 @@ def _sanitize_connectivity_env_for_openai() -> None:
 def _log_openai_target(client: Any) -> None:
     try:
         base_url_value = str(getattr(client, "base_url", "") or "")
-        if not base_url_value:
-            base_url_value = str(os.getenv("OPENAI_BASE_URL", "") or "")
         host, port = _parse_host_port(base_url_value)
         if host and port:
             logging.error("[openai] connect target host=%s port=%s", host, port)

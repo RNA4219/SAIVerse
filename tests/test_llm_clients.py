@@ -116,6 +116,14 @@ class TestLLMClients(unittest.TestCase):
 
         mock_connect.assert_called_once_with('127.0.0.1', 8081)
 
+    @patch('llm_clients.openai.logging.error')
+    @patch('llm_clients.openai.os.getenv')
+    def test_log_openai_target_does_not_read_openai_base_url_env(self, mock_getenv, mock_error):
+        openai_client_module._log_openai_target(SimpleNamespace(base_url=None))
+
+        mock_getenv.assert_not_called()
+        mock_error.assert_not_called()
+
     @patch('llm_clients.openai.OpenAI')
     def test_openai_client_generate(self, mock_openai):
         mock_client_instance = MagicMock()
