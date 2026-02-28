@@ -10,6 +10,7 @@ os.environ.setdefault('SAIVERSE_SKIP_TOOL_IMPORTS', '1')
 # テスト対象のモジュールをインポート
 import llm_clients
 from llm_clients import openai_errors
+from llm_clients import openai_runtime
 import tools as saiverse_tools
 from llm_clients import (
     LLMClient,
@@ -236,6 +237,42 @@ class TestLLMClients(unittest.TestCase):
         response_generator = client.generate_stream(messages, tools=[])
 
         self.assertEqual(list(response_generator), ["Stream ", "test"])
+
+    @patch('llm_clients.openai.OpenAI')
+    def test_openai_content_filter_message_is_unified(self, mock_openai):
+        mock_client_instance = MagicMock()
+        mock_openai.return_value = mock_client_instance
+        mock_resp = MagicMock()
+        mock_resp.usage = None
+        mock_resp.model_dump_json.return_value = '{}'
+        mock_choice = MagicMock()
+        mock_choice.finish_reason = "content_filter"
+        mock_resp.choices = [mock_choice]
+        mock_client_instance.chat.completions.create.return_value = mock_resp
+
+        client = OpenAIClient("gpt-4.1-nano")
+        with self.assertRaisesRegex(Exception, "OpenAI output blocked by content filter"):
+            client.generate([{"role": "user", "content": "Hello"}], tools=[])
+
+    def test_openai_runtime_call_with_retry_returns_on_retry(self):
+        calls = {"count": 0}
+
+        def _create():
+            calls["count"] += 1
+            if calls["count"] < 2:
+                raise RuntimeError("429")
+            return "ok"
+
+        with patch('llm_clients.openai_runtime.time.sleep'):
+            result = openai_runtime.call_with_retry(
+                _create,
+                context="test",
+                max_retries=3,
+                initial_backoff=0.01,
+                should_retry=lambda e: "429" in str(e),
+            )
+        self.assertEqual(result, "ok")
+        self.assertEqual(calls["count"], 2)
 
 
     def test_openai_error_helpers_should_retry(self):

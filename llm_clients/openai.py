@@ -6,7 +6,6 @@ import json
 import logging
 import mimetypes
 import os
-import time
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 import openai
@@ -17,6 +16,7 @@ from tools import OPENAI_TOOLS_SPEC
 from saiverse.llm_router import route
 
 from . import openai_errors
+from . import openai_runtime
 from .base import LLMClient, get_llm_logger
 from .exceptions import (
     AuthenticationError,
@@ -26,7 +26,6 @@ from .exceptions import (
     LLMTimeoutError,
     PaymentError,
     RateLimitError,
-    SafetyFilterError,
     ServerError,
 )
 from .utils import (
@@ -541,35 +540,23 @@ class OpenAIClient(LLMClient):
             logging.warning("response_schema specified alongside tools; structured output is ignored for tool runs.")
             response_schema = None
 
-        def _build_request_kwargs() -> Dict[str, Any]:
-            req = dict(self._request_kwargs)
-            if temperature is not None:
-                req["temperature"] = temperature
-            if response_schema:
-                if self.structured_output_mode == "json_object":
-                    # json_object mode: only guarantee valid JSON output;
-                    # schema adherence is handled by prompt injection
-                    req["response_format"] = {"type": "json_object"}
-                    logging.debug("[openai] Using json_object mode with prompt-based schema")
-                else:
-                    # native mode: strict json_schema enforcement
-                    schema_name = response_schema.get("title") if isinstance(response_schema, dict) else None
-                    openai_schema = self._add_additional_properties(response_schema)
-                    json_schema_config: Dict[str, Any] = {
-                        "name": schema_name or "saiverse_structured_output",
-                        "schema": openai_schema,
-                        "strict": True,
-                    }
-                    response_format_config: Dict[str, Any] = {
-                        "type": "json_schema",
-                        "json_schema": json_schema_config,
-                    }
-                    if self.structured_output_backend:
-                        json_schema_config["backend"] = self.structured_output_backend
-                        response_format_config["backend"] = self.structured_output_backend
-                        logging.info("Applying structured_output_backend='%s' to request (both locations)", self.structured_output_backend)
-                    req["response_format"] = response_format_config
-                    logging.debug("response_format: %s", req["response_format"])
+        def _build_request_kwargs(*, stream: bool = False) -> Dict[str, Any]:
+            req = openai_runtime.build_request_kwargs(
+                self._request_kwargs,
+                temperature=temperature,
+                response_schema=response_schema,
+                structured_output_mode=self.structured_output_mode,
+                structured_output_backend=self.structured_output_backend,
+                add_additional_properties=self._add_additional_properties,
+                stream=stream,
+                include_stream_usage=True,
+            )
+            if response_schema and self.structured_output_mode == "json_object":
+                logging.debug("[openai] Using json_object mode with prompt-based schema")
+            if response_schema and self.structured_output_mode != "json_object":
+                if self.structured_output_backend:
+                    logging.info("Applying structured_output_backend='%s' to request (both locations)", self.structured_output_backend)
+                logging.debug("response_format: %s", req.get("response_format"))
             return req
 
         # If json_object mode, inject schema into messages as a system instruction
@@ -579,62 +566,36 @@ class OpenAIClient(LLMClient):
 
         # Non-tool mode: return str or dict (if response_schema)
         if not use_tools:
-            resp = None
-            last_error: Optional[Exception] = None
-
-            for attempt in range(MAX_RETRIES):
-                try:
-                    resp = self._create_completion(
+            try:
+                resp = openai_runtime.call_with_retry(
+                    lambda: self._create_completion(
                         model=self.model,
                         messages=_prepare_openai_messages(effective_messages, self.supports_images, self.max_image_bytes, self.convert_system_to_user, self.reasoning_passback_field),
                         n=1,
                         **_build_request_kwargs(),
-                    )
-                    break  # Success, exit retry loop
-                except Exception as e:
-                    last_error = e
-                    if _should_retry(e) and attempt < MAX_RETRIES - 1:
-                        backoff = INITIAL_BACKOFF * (2 ** attempt)
-                        logging.warning(
-                            "[openai] Retryable error (attempt %d/%d): %s. Retrying in %.1fs...",
-                            attempt + 1, MAX_RETRIES, type(e).__name__, backoff
-                        )
-                        time.sleep(backoff)
-                        continue
-                    logging.exception("OpenAI call failed")
-                    raise _convert_to_llm_error(e, "API call")
-
-            if resp is None:
-                if last_error:
-                    raise _convert_to_llm_error(last_error, f"API call after {MAX_RETRIES} retries")
-                raise LLMEmptyResponseError(f"OpenAI API call failed after {MAX_RETRIES} retries with no response")
+                    ),
+                    context="API call",
+                    max_retries=MAX_RETRIES,
+                    initial_backoff=INITIAL_BACKOFF,
+                    should_retry=_should_retry,
+                )
+            except Exception as e:
+                logging.exception("OpenAI call failed")
+                raise _convert_to_llm_error(e, "API call")
 
             get_llm_logger().debug("OpenAI raw:\n%s", resp.model_dump_json(indent=2))
 
-            # Store usage information
-            if resp.usage:
-                # Check for cached tokens (OpenAI Prompt Caching)
-                cached = 0
-                if hasattr(resp.usage, "prompt_tokens_details") and resp.usage.prompt_tokens_details:
-                    cached = getattr(resp.usage.prompt_tokens_details, "cached_tokens", 0) or 0
-                self._store_usage(
-                    input_tokens=resp.usage.prompt_tokens or 0,
-                    output_tokens=resp.usage.completion_tokens or 0,
-                    cached_tokens=cached,
-                )
+            openai_runtime.store_usage_from_response(
+                resp,
+                lambda i, o, c: self._store_usage(input_tokens=i, output_tokens=o, cached_tokens=c),
+            )
 
             choice = resp.choices[0]
 
             # Check for content filter (output-level block)
             if choice.finish_reason == "content_filter":
-                logging.warning(
-                    "[openai] Output blocked by content filter. finish_reason=%s",
-                    choice.finish_reason,
-                )
-                raise SafetyFilterError(
-                    "OpenAI output blocked by content filter",
-                    user_message="生成された内容がOpenAIのコンテンツフィルターによりブロックされました。入力内容を変更してお試しください。",
-                )
+                logging.warning("[openai] Output blocked by content filter. finish_reason=%s", choice.finish_reason)
+                openai_runtime.raise_content_filter_error(context="output")
 
             text_body, reasoning_entries, reasoning_details = _extract_reasoning_from_openai_message(choice.message)
             if not text_body:
@@ -673,64 +634,38 @@ class OpenAIClient(LLMClient):
         for i, tool in enumerate(tools_spec):
             logging.info("[openai] Tool[%d]: %s", i, tool)
 
-        resp = None
-        last_error_tool: Optional[Exception] = None
-
-        for attempt in range(MAX_RETRIES):
-            try:
-                resp = self._create_completion(
+        try:
+            resp = openai_runtime.call_with_retry(
+                lambda: self._create_completion(
                     model=self.model,
                     messages=_prepare_openai_messages(messages, self.supports_images, self.max_image_bytes, self.convert_system_to_user, self.reasoning_passback_field),
                     tools=tools_spec,
                     tool_choice="auto",
                     n=1,
                     **_build_request_kwargs(),
-                )
-                break  # Success, exit retry loop
-            except Exception as e:
-                last_error_tool = e
-                if _should_retry(e) and attempt < MAX_RETRIES - 1:
-                    backoff = INITIAL_BACKOFF * (2 ** attempt)
-                    logging.warning(
-                        "[openai] Retryable error in tool mode (attempt %d/%d): %s. Retrying in %.1fs...",
-                        attempt + 1, MAX_RETRIES, type(e).__name__, backoff
-                    )
-                    time.sleep(backoff)
-                    continue
-                logging.exception("OpenAI call failed")
-                raise _convert_to_llm_error(e, "API call (tool mode)")
-
-        if resp is None:
-            if last_error_tool:
-                raise _convert_to_llm_error(last_error_tool, f"API call after {MAX_RETRIES} retries (tool mode)")
-            raise LLMEmptyResponseError(f"OpenAI API call failed after {MAX_RETRIES} retries with no response")
+                ),
+                context="API call (tool mode)",
+                max_retries=MAX_RETRIES,
+                initial_backoff=INITIAL_BACKOFF,
+                should_retry=_should_retry,
+            )
+        except Exception as e:
+            logging.exception("OpenAI call failed")
+            raise _convert_to_llm_error(e, "API call (tool mode)")
 
         get_llm_logger().debug("OpenAI raw (tool detection):\n%s", resp.model_dump_json(indent=2))
 
-        # Store usage information
-        if resp.usage:
-            # Check for cached tokens (OpenAI Prompt Caching)
-            cached = 0
-            if hasattr(resp.usage, "prompt_tokens_details") and resp.usage.prompt_tokens_details:
-                cached = getattr(resp.usage.prompt_tokens_details, "cached_tokens", 0) or 0
-            self._store_usage(
-                input_tokens=resp.usage.prompt_tokens or 0,
-                output_tokens=resp.usage.completion_tokens or 0,
-                cached_tokens=cached,
-            )
+        openai_runtime.store_usage_from_response(
+            resp,
+            lambda i, o, c: self._store_usage(input_tokens=i, output_tokens=o, cached_tokens=c),
+        )
 
         choice = resp.choices[0]
 
         # Check for content filter (output-level block)
         if choice.finish_reason == "content_filter":
-            logging.warning(
-                "[openai] Output blocked by content filter (tool mode). finish_reason=%s",
-                choice.finish_reason,
-            )
-            raise SafetyFilterError(
-                "OpenAI output blocked by content filter",
-                user_message="生成された内容がOpenAIのコンテンツフィルターによりブロックされました。入力内容を変更してお試しください。",
-            )
+            logging.warning("[openai] Output blocked by content filter (tool mode). finish_reason=%s", choice.finish_reason)
+            openai_runtime.raise_content_filter_error(context="output")
 
         tool_calls = getattr(choice.message, "tool_calls", [])
 
@@ -792,62 +727,36 @@ class OpenAIClient(LLMClient):
             effective_messages = self._inject_schema_prompt(messages, response_schema)
 
         if not use_tools:
-            resp = None
-            last_stream_error: Optional[Exception] = None
-
-            for attempt in range(MAX_RETRIES):
-                try:
-                    req_kwargs = dict(self._request_kwargs)
-                    if temperature is not None:
-                        req_kwargs["temperature"] = temperature
-                    if response_schema:
-                        if self.structured_output_mode == "json_object":
-                            req_kwargs["response_format"] = {"type": "json_object"}
-                            logging.debug("[openai] Using json_object mode with prompt-based schema (stream)")
-                        else:
-                            schema_name = response_schema.get("title") if isinstance(response_schema, dict) else None
-                            openai_schema = self._add_additional_properties(response_schema)
-                            json_schema_config: Dict[str, Any] = {
-                                "name": schema_name or "saiverse_structured_output",
-                                "schema": openai_schema,
-                                "strict": True,
-                            }
-                            response_format_config: Dict[str, Any] = {
-                                "type": "json_schema",
-                                "json_schema": json_schema_config,
-                            }
-                            if self.structured_output_backend:
-                                json_schema_config["backend"] = self.structured_output_backend
-                                response_format_config["backend"] = self.structured_output_backend
-                                logging.info("Applying structured_output_backend='%s' to request (stream)", self.structured_output_backend)
-                            req_kwargs["response_format"] = response_format_config
-                    else:
-                        req_kwargs["stream"] = True
-                        req_kwargs["stream_options"] = {"include_usage": True}
-                    resp = self._create_completion(
+            req_kwargs = openai_runtime.build_request_kwargs(
+                self._request_kwargs,
+                temperature=temperature,
+                response_schema=response_schema,
+                structured_output_mode=self.structured_output_mode,
+                structured_output_backend=self.structured_output_backend,
+                add_additional_properties=self._add_additional_properties,
+                stream=not bool(response_schema),
+                include_stream_usage=True,
+            )
+            if response_schema and self.structured_output_mode == "json_object":
+                logging.debug("[openai] Using json_object mode with prompt-based schema (stream)")
+            if response_schema and self.structured_output_mode != "json_object" and self.structured_output_backend:
+                logging.info("Applying structured_output_backend='%s' to request (stream)", self.structured_output_backend)
+            try:
+                resp = openai_runtime.call_with_retry(
+                    lambda: self._create_completion(
                         model=self.model,
                         messages=_prepare_openai_messages(effective_messages, self.supports_images, self.max_image_bytes, self.convert_system_to_user, self.reasoning_passback_field),
                         n=1,
                         **req_kwargs,
-                    )
-                    break  # Success, exit retry loop
-                except Exception as e:
-                    last_stream_error = e
-                    if _should_retry(e) and attempt < MAX_RETRIES - 1:
-                        backoff = INITIAL_BACKOFF * (2 ** attempt)
-                        logging.warning(
-                            "[openai] Retryable streaming error (attempt %d/%d): %s. Retrying in %.1fs...",
-                            attempt + 1, MAX_RETRIES, type(e).__name__, backoff
-                        )
-                        time.sleep(backoff)
-                        continue
-                    logging.exception("OpenAI call failed")
-                    raise _convert_to_llm_error(e, "streaming")
-
-            if resp is None:
-                if last_stream_error:
-                    raise _convert_to_llm_error(last_stream_error, f"streaming after {MAX_RETRIES} retries")
-                raise LLMEmptyResponseError(f"OpenAI streaming failed after {MAX_RETRIES} retries with no response")
+                    ),
+                    context="streaming",
+                    max_retries=MAX_RETRIES,
+                    initial_backoff=INITIAL_BACKOFF,
+                    should_retry=_should_retry,
+                )
+            except Exception as e:
+                logging.exception("OpenAI call failed")
+                raise _convert_to_llm_error(e, "streaming")
 
             # Handle streaming vs non-streaming response
             if req_kwargs.get("stream"):
@@ -887,26 +796,13 @@ class OpenAIClient(LLMClient):
                                 yield text_fragment
                 # Check for content filter in streaming
                 if last_finish_reason == "content_filter":
-                    logging.warning(
-                        "[openai] Stream output blocked by content filter. finish_reason=%s",
-                        last_finish_reason,
-                    )
-                    raise SafetyFilterError(
-                        "OpenAI streaming output blocked by content filter",
-                        user_message="生成された内容がOpenAIのコンテンツフィルターによりブロックされました。入力内容を変更してお試しください。",
-                    )
+                    logging.warning("[openai] Stream output blocked by content filter. finish_reason=%s", last_finish_reason)
+                    openai_runtime.raise_content_filter_error(context="output")
 
-                # Store usage from last chunk (when stream_options.include_usage=True)
-                if last_chunk and hasattr(last_chunk, "usage") and last_chunk.usage:
-                    # Check for cached tokens (OpenAI Prompt Caching)
-                    cached = 0
-                    if hasattr(last_chunk.usage, "prompt_tokens_details") and last_chunk.usage.prompt_tokens_details:
-                        cached = getattr(last_chunk.usage.prompt_tokens_details, "cached_tokens", 0) or 0
-                    self._store_usage(
-                        input_tokens=last_chunk.usage.prompt_tokens or 0,
-                        output_tokens=last_chunk.usage.completion_tokens or 0,
-                        cached_tokens=cached,
-                    )
+                openai_runtime.store_usage_from_last_chunk(
+                    last_chunk,
+                    lambda i, o, c: self._store_usage(input_tokens=i, output_tokens=o, cached_tokens=c),
+                )
                 # Store reasoning collected during streaming
                 self._store_reasoning(merge_reasoning_strings(reasoning_chunks))
                 # Store reasoning_details for multi-turn pass-back (structured objects only)
@@ -945,39 +841,26 @@ class OpenAIClient(LLMClient):
                 else:
                     force_tool_choice = "auto"
 
-        resp = None
-        last_tool_stream_error: Optional[Exception] = None
-
-        for attempt in range(MAX_RETRIES):
-            try:
-                stream_req_kwargs = dict(self._request_kwargs)
-                stream_req_kwargs["stream_options"] = {"include_usage": True}
-                resp = self._create_completion(
+        stream_req_kwargs = dict(self._request_kwargs)
+        stream_req_kwargs["stream_options"] = {"include_usage": True}
+        try:
+            resp = openai_runtime.call_with_retry(
+                lambda: self._create_completion(
                     model=self.model,
                     messages=_prepare_openai_messages(messages, self.supports_images, self.max_image_bytes, self.convert_system_to_user, self.reasoning_passback_field),
                     tools=tools_spec,
                     tool_choice=force_tool_choice,
                     stream=True,
                     **stream_req_kwargs,
-                )
-                break  # Success, exit retry loop
-            except Exception as e:
-                last_tool_stream_error = e
-                if _should_retry(e) and attempt < MAX_RETRIES - 1:
-                    backoff = INITIAL_BACKOFF * (2 ** attempt)
-                    logging.warning(
-                        "[openai] Retryable tool streaming error (attempt %d/%d): %s. Retrying in %.1fs...",
-                        attempt + 1, MAX_RETRIES, type(e).__name__, backoff
-                    )
-                    time.sleep(backoff)
-                    continue
-                logging.exception("OpenAI call failed")
-                raise _convert_to_llm_error(e, "JSON mode call")
-
-        if resp is None:
-            if last_tool_stream_error:
-                raise _convert_to_llm_error(last_tool_stream_error, f"JSON mode call after {MAX_RETRIES} retries")
-            raise LLMEmptyResponseError(f"OpenAI JSON mode call failed after {MAX_RETRIES} retries with no response")
+                ),
+                context="JSON mode call",
+                max_retries=MAX_RETRIES,
+                initial_backoff=INITIAL_BACKOFF,
+                should_retry=_should_retry,
+            )
+        except Exception as e:
+            logging.exception("OpenAI call failed")
+            raise _convert_to_llm_error(e, "JSON mode call")
 
         call_buffer: dict[str, dict] = {}
         state = "TEXT"
@@ -1041,17 +924,10 @@ class OpenAIClient(LLMClient):
                 # Collect raw reasoning_details objects for multi-turn passback
                 reasoning_details_raw.extend(_extract_raw_reasoning_details_from_delta(delta))
 
-            # Store usage from last chunk (when stream_options.include_usage=True)
-            if last_chunk and hasattr(last_chunk, "usage") and last_chunk.usage:
-                # Check for cached tokens (OpenAI Prompt Caching)
-                cached = 0
-                if hasattr(last_chunk.usage, "prompt_tokens_details") and last_chunk.usage.prompt_tokens_details:
-                    cached = getattr(last_chunk.usage.prompt_tokens_details, "cached_tokens", 0) or 0
-                self._store_usage(
-                    input_tokens=last_chunk.usage.prompt_tokens or 0,
-                    output_tokens=last_chunk.usage.completion_tokens or 0,
-                    cached_tokens=cached,
-                )
+            openai_runtime.store_usage_from_last_chunk(
+                last_chunk,
+                lambda i, o, c: self._store_usage(input_tokens=i, output_tokens=o, cached_tokens=c),
+            )
 
             # Store reasoning
             self._store_reasoning(merge_reasoning_strings(reasoning_chunks))
