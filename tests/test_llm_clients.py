@@ -4,12 +4,16 @@ from unittest.mock import MagicMock, patch
 import os
 import json
 from typing import List, Dict, Iterator
+
+import httpx
+import openai
 from google.genai import types as genai_types
 
 os.environ.setdefault('SAIVERSE_SKIP_TOOL_IMPORTS', '1')
 
 # テスト対象のモジュールをインポート
 import llm_clients
+import llm_clients.openai as openai_client_module
 import tools as saiverse_tools
 from llm_clients import (
     LLMClient,
@@ -303,6 +307,23 @@ class TestLLMClients(unittest.TestCase):
                 with self.assertRaises(expected):
                     client.generate([{"role": "user", "content": "Hello"}], tools=[])
                 self.assertEqual(mock_client_instance.chat.completions.create.call_count, 1)
+
+    def test_openai_authentication_detection_prefers_sdk_error_types(self):
+        response_401 = httpx.Response(401, request=httpx.Request("POST", "https://api.openai.com/v1/chat/completions"))
+        response_403 = httpx.Response(403, request=httpx.Request("POST", "https://api.openai.com/v1/chat/completions"))
+        response_500 = httpx.Response(500, request=httpx.Request("POST", "https://api.openai.com/v1/chat/completions"))
+
+        self.assertTrue(openai_client_module._is_authentication_error(openai.AuthenticationError("auth", response=response_401, body={})))
+        self.assertTrue(openai_client_module._is_authentication_error(openai.APIStatusError("forbidden", response=response_403, body={})))
+        self.assertTrue(openai_client_module._is_authentication_error(openai.APIStatusError("unauthorized", response=response_401, body={})))
+        self.assertFalse(openai_client_module._is_authentication_error(openai.APIStatusError("server", response=response_500, body={})))
+
+    def test_openai_convert_to_llm_error_uses_limited_auth_keywords(self):
+        converted = openai_client_module._convert_to_llm_error(Exception("authentication failed"))
+        self.assertNotIsInstance(converted, AuthenticationError)
+
+        converted = openai_client_module._convert_to_llm_error(Exception("invalid api key"))
+        self.assertIsInstance(converted, AuthenticationError)
 
     @patch('llm_clients.openai.OpenAI')
     def test_openai_client_generate_return_format_compat_with_and_without_tool_call(self, mock_openai):
