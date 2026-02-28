@@ -306,6 +306,105 @@ class TestLLMClients(unittest.TestCase):
 
         self.assertEqual(list(response_generator), ["Stream ", "test"])
 
+    @patch('llm_clients.openai.OpenAI')
+    def test_openai_stream_tool_call_fragments_are_reconstructed(self, mock_openai):
+        mock_client_instance = MagicMock()
+        mock_openai.return_value = mock_client_instance
+
+        chunk1 = MagicMock()
+        delta1 = MagicMock()
+        delta1.content = None
+        call1 = MagicMock()
+        call1.id = "call_1"
+        call1.function.name = "search"
+        call1.function.arguments = '{"query":'
+        delta1.tool_calls = [call1]
+        chunk1.choices = [MagicMock(delta=delta1)]
+
+        chunk2 = MagicMock()
+        delta2 = MagicMock()
+        delta2.content = None
+        call2 = MagicMock()
+        call2.id = None
+        call2.function.name = None
+        call2.function.arguments = ' "tokyo"}'
+        delta2.tool_calls = [call2]
+        chunk2.choices = [MagicMock(delta=delta2)]
+
+        mock_client_instance.chat.completions.create.return_value = [chunk1, chunk2]
+
+        client = OpenAIClient("gpt-4.1-nano")
+        list(client.generate_stream([{"role": "user", "content": "find"}], tools=[{"type": "function", "function": {"name": "search", "parameters": {"type": "object", "properties": {}}}}]))
+
+        detection = client.consume_tool_detection()
+        self.assertEqual(detection["type"], "tool_call")
+        self.assertEqual(detection["tool_name"], "search")
+        self.assertEqual(detection["tool_args"], {"query": "tokyo"})
+
+    @patch('llm_clients.openai.OpenAI')
+    def test_openai_stream_emits_thinking_event(self, mock_openai):
+        mock_client_instance = MagicMock()
+        mock_openai.return_value = mock_client_instance
+
+        chunk = MagicMock()
+        delta = MagicMock()
+        delta.tool_calls = None
+        delta.reasoning = "step by step"
+        delta.content = None
+        delta.model_dump.return_value = {"reasoning": "step by step"}
+        chunk.choices = [MagicMock(delta=delta)]
+        mock_client_instance.chat.completions.create.return_value = [chunk]
+
+        client = OpenAIClient("gpt-4.1-nano")
+        out = list(client.generate_stream([{"role": "user", "content": "hi"}], tools=[]))
+        self.assertEqual(out, [{"type": "thinking", "content": "step by step"}])
+
+    @patch('llm_clients.openai.OpenAI')
+    def test_openai_stream_content_filter_raises(self, mock_openai):
+        mock_client_instance = MagicMock()
+        mock_openai.return_value = mock_client_instance
+
+        chunk = MagicMock()
+        choice = MagicMock()
+        choice.finish_reason = "content_filter"
+        delta = MagicMock()
+        delta.tool_calls = None
+        delta.content = None
+        choice.delta = delta
+        chunk.choices = [choice]
+        mock_client_instance.chat.completions.create.return_value = [chunk]
+
+        client = OpenAIClient("gpt-4.1-nano")
+        with self.assertRaisesRegex(Exception, "OpenAI output blocked by content filter"):
+            list(client.generate_stream([{"role": "user", "content": "hi"}], tools=[]))
+
+    @patch('llm_clients.openai.OpenAI')
+    def test_openai_stream_history_prefix_emitted_only_on_first_text(self, mock_openai):
+        mock_client_instance = MagicMock()
+        mock_openai.return_value = mock_client_instance
+
+        chunk1 = MagicMock()
+        delta1 = MagicMock()
+        delta1.tool_calls = None
+        delta1.content = [{"type": "reasoning", "text": "internal"}]
+        chunk1.choices = [MagicMock(delta=delta1)]
+
+        chunk2 = MagicMock()
+        delta2 = MagicMock()
+        delta2.tool_calls = None
+        delta2.content = "hello"
+        chunk2.choices = [MagicMock(delta=delta2)]
+
+        mock_client_instance.chat.completions.create.return_value = [chunk1, chunk2]
+
+        client = OpenAIClient("gpt-4.1-nano")
+        out = list(client.generate_stream(
+            [{"role": "user", "content": "hi"}],
+            tools=[{"type": "function", "function": {"name": "search", "parameters": {"type": "object", "properties": {}}}}],
+            history_snippets=["h1", "h2"],
+        ))
+        self.assertEqual(out, [{"type": "thinking", "content": "internal"}, "h1\nh2\n", "hello"])
+
     def test_prepare_openai_messages_regression_host_and_empty_and_reasoning(self):
         messages = [
             {"role": "host", "content": "Host instruction"},
