@@ -142,8 +142,10 @@ def _is_authentication_error(err: Exception) -> bool:
     """Check if the error is an authentication error."""
     if isinstance(err, openai.AuthenticationError):
         return True
+    if isinstance(err, openai.APIStatusError):
+        return err.status_code in {401, 403}
     msg = str(err).lower()
-    return "401" in msg or "403" in msg or "authentication" in msg or "invalid api key" in msg
+    return "invalid api key" in msg or "incorrect api key" in msg or "invalid_api_key" in msg
 
 
 def _is_payment_error(err: Exception) -> bool:
