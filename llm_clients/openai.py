@@ -588,6 +588,22 @@ class OpenAIClient(LLMClient):
                 logging.debug("response_format: %s", request_params["response_format"])
         return request_params
 
+    def _build_generate_request(
+        self,
+        *,
+        messages: List[Dict[str, Any]],
+        response_schema: Optional[Dict[str, Any]],
+        temperature: float | None,
+    ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        effective_messages = messages
+        if response_schema and self.structured_output_mode == "json_object":
+            effective_messages = self._inject_schema_prompt(messages, response_schema)
+        request_params = self._build_request_params(
+            temperature=temperature,
+            response_schema=response_schema,
+        )
+        return effective_messages, request_params
+
     def _execute_with_retry(
         self,
         *,
@@ -630,6 +646,20 @@ class OpenAIClient(LLMClient):
                 raise _convert_to_llm_error(last_error, f"{error_context} after {MAX_RETRIES} retries")
             raise LLMEmptyResponseError(f"OpenAI {error_context} failed after {MAX_RETRIES} retries with no response")
         return resp
+
+    def _execute_generate_with_retry(
+        self,
+        *,
+        messages: List[Dict[str, Any]],
+        request_params: Dict[str, Any],
+        use_tools: bool,
+    ) -> Any:
+        return self._execute_with_retry(
+            messages=messages,
+            request_params=request_params,
+            error_context="API call (tool mode)" if use_tools else "API call",
+            retry_log_prefix="[openai] Retryable error in tool mode" if use_tools else "[openai] Retryable error",
+        )
 
     def _finalize_generate_result(
         self,
@@ -694,6 +724,54 @@ class OpenAIClient(LLMClient):
 
         return text_body
 
+    def _finalize_generate_tool_result(self, *, resp: Any) -> Dict[str, Any]:
+        get_llm_logger().debug("OpenAI raw (tool detection):\n%s", resp.model_dump_json(indent=2))
+
+        if resp.usage:
+            cached = 0
+            if hasattr(resp.usage, "prompt_tokens_details") and resp.usage.prompt_tokens_details:
+                cached = getattr(resp.usage.prompt_tokens_details, "cached_tokens", 0) or 0
+            self._store_usage(
+                input_tokens=resp.usage.prompt_tokens or 0,
+                output_tokens=resp.usage.completion_tokens or 0,
+                cached_tokens=cached,
+            )
+
+        choice = resp.choices[0]
+        if choice.finish_reason == "content_filter":
+            logging.warning(
+                "[openai] Output blocked by content filter (tool mode). finish_reason=%s",
+                choice.finish_reason,
+            )
+            raise SafetyFilterError(
+                "OpenAI output blocked by content filter",
+                user_message="生成された内容がOpenAIのコンテンツフィルターによりブロックされました。入力内容を変更してお試しください。",
+            )
+
+        tool_calls = getattr(choice.message, "tool_calls", [])
+        text_body, reasoning_entries, reasoning_details = _extract_reasoning_from_openai_message(choice.message)
+        self._store_reasoning(reasoning_entries)
+        self._store_reasoning_details(reasoning_details)
+
+        if tool_calls and len(tool_calls) > 0:
+            tc = tool_calls[0]
+            try:
+                args = json.loads(tc.function.arguments)
+            except json.JSONDecodeError:
+                logging.warning("Tool call arguments invalid JSON: %s", tc.function.arguments)
+                args = {}
+            return {"type": "tool_call", "tool_name": tc.function.name, "tool_args": args, "raw_message": choice.message}
+
+        content = text_body or choice.message.content or ""
+        if not content.strip():
+            logging.error(
+                "[openai] Empty text response without tool call. "
+                "Model returned empty content. finish_reason=%s",
+                choice.finish_reason,
+            )
+            raise LLMEmptyResponseError("OpenAI returned empty response without tool call")
+        return {"type": "text", "content": content}
+
     def _build_stream_request_params(
         self,
         *,
@@ -738,12 +816,24 @@ class OpenAIClient(LLMClient):
             text_fragment, reasoning_piece = _process_openai_stream_content(delta.content)
         return text_fragment, extra_reasoning + reasoning_piece, reasoning_details_raw
 
+    def _interpret_stream_chunk(self, *, delta: Any) -> Dict[str, Any]:
+        if delta.tool_calls:
+            return {"kind": "tool", "tool_calls": delta.tool_calls}
+        text_fragment, chunk_reasoning, chunk_reasoning_details = self._parse_stream_chunk(delta)
+        return {
+            "kind": "text",
+            "text_fragment": text_fragment,
+            "reasoning": chunk_reasoning,
+            "reasoning_details": chunk_reasoning_details,
+        }
+
     def _finalize_stream_state(
         self,
         *,
         last_chunk: Any,
         reasoning_chunks: List[str],
         reasoning_details_raw: List[Dict[str, Any]],
+        tool_call_buffer: Optional[dict[str, dict]] = None,
     ) -> None:
         if last_chunk and hasattr(last_chunk, "usage") and last_chunk.usage:
             cached = 0
@@ -757,6 +847,27 @@ class OpenAIClient(LLMClient):
         self._store_reasoning(merge_reasoning_strings(reasoning_chunks))
         if reasoning_details_raw:
             self._store_reasoning_details(_merge_streaming_reasoning_details(reasoning_details_raw))
+        if tool_call_buffer:
+            first_tc = next(iter(tool_call_buffer.values()), None)
+            if first_tc:
+                name = first_tc["name"].strip()
+                arg_str = first_tc["arguments"].strip()
+                if name and arg_str:
+                    try:
+                        args = json.loads(arg_str)
+                    except json.JSONDecodeError:
+                        logging.warning("tool_call arguments invalid JSON: %s", arg_str)
+                        args = {}
+                    self._store_tool_detection({
+                        "type": "tool_call",
+                        "tool_name": name,
+                        "tool_args": args,
+                        "raw_tool_call": first_tc,
+                    })
+                    logging.info("[openai] Tool detection stored: %s", name)
+                    return
+                logging.warning("tool_call has empty name or arguments; not storing")
+        self._store_tool_detection({"type": "text", "content": ""})
 
     def generate(
         self,
@@ -795,22 +906,17 @@ class OpenAIClient(LLMClient):
             logging.warning("response_schema specified alongside tools; structured output is ignored for tool runs.")
             response_schema = None
 
-        # If json_object mode, inject schema into messages as a system instruction
-        effective_messages = messages
-        if response_schema and self.structured_output_mode == "json_object":
-            effective_messages = self._inject_schema_prompt(messages, response_schema)
-
         # Non-tool mode: return str or dict (if response_schema)
         if not use_tools:
-            request_params = self._build_request_params(
-                temperature=temperature,
+            effective_messages, request_params = self._build_generate_request(
+                messages=messages,
                 response_schema=response_schema,
+                temperature=temperature,
             )
-            resp = self._execute_with_retry(
+            resp = self._execute_generate_with_retry(
                 messages=effective_messages,
                 request_params=request_params,
-                error_context="API call",
-                retry_log_prefix="[openai] Retryable error",
+                use_tools=False,
             )
             return self._finalize_generate_result(
                 resp=resp,
@@ -829,71 +935,12 @@ class OpenAIClient(LLMClient):
         )
         request_params["tools"] = tools_spec
         request_params["tool_choice"] = "auto"
-        resp = self._execute_with_retry(
+        resp = self._execute_generate_with_retry(
             messages=messages,
             request_params=request_params,
-            error_context="API call (tool mode)",
-            retry_log_prefix="[openai] Retryable error in tool mode",
+            use_tools=True,
         )
-
-        get_llm_logger().debug("OpenAI raw (tool detection):\n%s", resp.model_dump_json(indent=2))
-
-        # Store usage information
-        if resp.usage:
-            # Check for cached tokens (OpenAI Prompt Caching)
-            cached = 0
-            if hasattr(resp.usage, "prompt_tokens_details") and resp.usage.prompt_tokens_details:
-                cached = getattr(resp.usage.prompt_tokens_details, "cached_tokens", 0) or 0
-            self._store_usage(
-                input_tokens=resp.usage.prompt_tokens or 0,
-                output_tokens=resp.usage.completion_tokens or 0,
-                cached_tokens=cached,
-            )
-
-        choice = resp.choices[0]
-
-        # Check for content filter (output-level block)
-        if choice.finish_reason == "content_filter":
-            logging.warning(
-                "[openai] Output blocked by content filter (tool mode). finish_reason=%s",
-                choice.finish_reason,
-            )
-            raise SafetyFilterError(
-                "OpenAI output blocked by content filter",
-                user_message="生成された内容がOpenAIのコンテンツフィルターによりブロックされました。入力内容を変更してお試しください。",
-            )
-
-        tool_calls = getattr(choice.message, "tool_calls", [])
-
-        # Extract reasoning if present
-        text_body, reasoning_entries, reasoning_details = _extract_reasoning_from_openai_message(choice.message)
-        self._store_reasoning(reasoning_entries)
-        self._store_reasoning_details(reasoning_details)
-
-        if tool_calls and len(tool_calls) > 0:
-            tc = tool_calls[0]
-            try:
-                args = json.loads(tc.function.arguments)
-            except json.JSONDecodeError:
-                logging.warning("Tool call arguments invalid JSON: %s", tc.function.arguments)
-                args = {}
-            return {
-                "type": "tool_call",
-                "tool_name": tc.function.name,
-                "tool_args": args,
-                "raw_message": choice.message,
-            }
-        else:
-            content = text_body or choice.message.content or ""
-            # Check for empty text response without tool call
-            if not content.strip():
-                logging.error(
-                    "[openai] Empty text response without tool call. "
-                    "Model returned empty content. finish_reason=%s",
-                    choice.finish_reason
-                )
-                raise LLMEmptyResponseError("OpenAI returned empty response without tool call")
-            return {"type": "text", "content": content}
+        return self._finalize_generate_tool_result(resp=resp)
 
     def generate_stream(
         self,
@@ -1032,9 +1079,10 @@ class OpenAIClient(LLMClient):
                 last_chunk = chunk
                 delta = chunk.choices[0].delta
 
-                if delta.tool_calls:
+                interpreted = self._interpret_stream_chunk(delta=delta)
+                if interpreted["kind"] == "tool":
                     state = "TOOL_CALL"
-                    for call in delta.tool_calls:
+                    for call in interpreted["tool_calls"]:
                         tc_id = call.id or current_call_id
                         if tc_id is None:
                             logging.warning("tool_chunk without id; skipping")
@@ -1056,7 +1104,9 @@ class OpenAIClient(LLMClient):
                             buf["arguments"] += call.function.arguments
                     continue
 
-                text_fragment, chunk_reasoning, chunk_reasoning_details = self._parse_stream_chunk(delta)
+                text_fragment = interpreted["text_fragment"]
+                chunk_reasoning = interpreted["reasoning"]
+                chunk_reasoning_details = interpreted["reasoning_details"]
                 for r in chunk_reasoning:
                     reasoning_chunks.append(r)
                     yield {"type": "thinking", "content": r}
@@ -1072,40 +1122,8 @@ class OpenAIClient(LLMClient):
                 last_chunk=last_chunk,
                 reasoning_chunks=reasoning_chunks,
                 reasoning_details_raw=reasoning_details_raw,
+                tool_call_buffer=call_buffer,
             )
-
-            # Store tool detection result if tool calls were detected
-            if call_buffer:
-                logging.debug("call_buffer final: %s", json.dumps(call_buffer, indent=2, ensure_ascii=False))
-                # Get the first tool call (for now, only support single tool call)
-                first_tc = next(iter(call_buffer.values()), None)
-                if first_tc:
-                    name = first_tc["name"].strip()
-                    arg_str = first_tc["arguments"].strip()
-
-                    if name and arg_str:
-                        try:
-                            args = json.loads(arg_str)
-                        except json.JSONDecodeError:
-                            logging.warning("tool_call arguments invalid JSON: %s", arg_str)
-                            args = {}
-
-                        # Collect all text that was yielded (approximation)
-                        # Note: We don't have a perfect way to collect yielded text here,
-                        # but in most cases tool_call doesn't come with text
-                        self._store_tool_detection({
-                            "type": "tool_call",
-                            "tool_name": name,
-                            "tool_args": args,
-                            "raw_tool_call": first_tc,
-                        })
-                        logging.info("[openai] Tool detection stored: %s", name)
-                    else:
-                        logging.warning("tool_call has empty name or arguments; not storing")
-                        self._store_tool_detection({"type": "text", "content": ""})
-            else:
-                # No tool call - store text-only result
-                self._store_tool_detection({"type": "text", "content": ""})
 
         except LLMError:
             # Re-raise LLMError subclasses directly
