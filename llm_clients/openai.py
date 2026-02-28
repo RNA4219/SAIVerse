@@ -588,21 +588,38 @@ class OpenAIClient(LLMClient):
                 logging.debug("response_format: %s", request_params["response_format"])
         return request_params
 
-    def _build_generate_request(
+    def _build_generate_request_params(
         self,
         *,
         messages: List[Dict[str, Any]],
+        tools: Optional[list],
         response_schema: Optional[Dict[str, Any]],
         temperature: float | None,
-    ) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    ) -> Tuple[List[Dict[str, Any]], Dict[str, Any], bool, Optional[Dict[str, Any]]]:
+        tools_spec = tools or []
+        use_tools = bool(tools_spec)
+        effective_response_schema = response_schema
+
+        if effective_response_schema and use_tools:
+            logging.warning("response_schema specified alongside tools; structured output is ignored for tool runs.")
+            effective_response_schema = None
+
         effective_messages = messages
-        if response_schema and self.structured_output_mode == "json_object":
-            effective_messages = self._inject_schema_prompt(messages, response_schema)
+        if effective_response_schema and self.structured_output_mode == "json_object" and not use_tools:
+            effective_messages = self._inject_schema_prompt(messages, effective_response_schema)
+
         request_params = self._build_request_params(
             temperature=temperature,
-            response_schema=response_schema,
+            response_schema=effective_response_schema,
         )
-        return effective_messages, request_params
+        if use_tools:
+            logging.info("[openai] Sending %d tools to API", len(tools_spec))
+            for i, tool in enumerate(tools_spec):
+                logging.info("[openai] Tool[%d]: %s", i, tool)
+            request_params["tools"] = tools_spec
+            request_params["tool_choice"] = "auto"
+
+        return effective_messages, request_params, use_tools, effective_response_schema
 
     def _execute_with_retry(
         self,
@@ -723,6 +740,22 @@ class OpenAIClient(LLMClient):
             return text_body
 
         return text_body
+
+    def _finalize_generate_response(
+        self,
+        *,
+        resp: Any,
+        snippets: List[str],
+        response_schema: Optional[Dict[str, Any]],
+        use_tools: bool,
+    ) -> str | Dict[str, Any]:
+        if use_tools:
+            return self._finalize_generate_tool_result(resp=resp)
+        return self._finalize_generate_result(
+            resp=resp,
+            snippets=snippets,
+            response_schema=response_schema,
+        )
 
     def _finalize_generate_tool_result(self, *, resp: Any) -> Dict[str, Any]:
         get_llm_logger().debug("OpenAI raw (tool detection):\n%s", resp.model_dump_json(indent=2))
@@ -897,50 +930,26 @@ class OpenAIClient(LLMClient):
                   - tool_name: Tool name (if type is "tool_call")
                   - tool_args: Tool arguments dict (if type is "tool_call")
         """
-        tools_spec = tools or []
-        use_tools = bool(tools_spec)
         snippets: List[str] = list(history_snippets or [])
         self._store_reasoning([])
 
-        if response_schema and use_tools:
-            logging.warning("response_schema specified alongside tools; structured output is ignored for tool runs.")
-            response_schema = None
-
-        # Non-tool mode: return str or dict (if response_schema)
-        if not use_tools:
-            effective_messages, request_params = self._build_generate_request(
-                messages=messages,
-                response_schema=response_schema,
-                temperature=temperature,
-            )
-            resp = self._execute_generate_with_retry(
-                messages=effective_messages,
-                request_params=request_params,
-                use_tools=False,
-            )
-            return self._finalize_generate_result(
-                resp=resp,
-                snippets=snippets,
-                response_schema=response_schema,
-            )
-
-        # Tool mode: return Dict with tool detection (no execution)
-        logging.info("[openai] Sending %d tools to API", len(tools_spec))
-        for i, tool in enumerate(tools_spec):
-            logging.info("[openai] Tool[%d]: %s", i, tool)
-
-        request_params = self._build_request_params(
-            temperature=temperature,
-            response_schema=response_schema,
-        )
-        request_params["tools"] = tools_spec
-        request_params["tool_choice"] = "auto"
-        resp = self._execute_generate_with_retry(
+        effective_messages, request_params, use_tools, effective_response_schema = self._build_generate_request_params(
             messages=messages,
-            request_params=request_params,
-            use_tools=True,
+            tools=tools,
+            response_schema=response_schema,
+            temperature=temperature,
         )
-        return self._finalize_generate_tool_result(resp=resp)
+        resp = self._execute_generate_with_retry(
+            messages=effective_messages,
+            request_params=request_params,
+            use_tools=use_tools,
+        )
+        return self._finalize_generate_response(
+            resp=resp,
+            snippets=snippets,
+            response_schema=effective_response_schema,
+            use_tools=use_tools,
+        )
 
     def generate_stream(
         self,
