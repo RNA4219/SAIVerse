@@ -458,13 +458,30 @@ def set_developer_mode(req: DeveloperModeRequest, manager=Depends(get_manager)):
     return {"success": True, "enabled": req.enabled}
 
 
+class XPollingRequest(BaseModel):
+    enabled: bool
+
+
+@router.get("/x-polling")
+def get_x_polling(manager=Depends(get_manager)):
+    """Get X mention polling status."""
+    return {"enabled": manager.state.x_polling_enabled}
+
+
+@router.post("/x-polling")
+def set_x_polling(req: XPollingRequest, manager=Depends(get_manager)):
+    """Toggle X mention polling on/off."""
+    manager.state.x_polling_enabled = req.enabled
+    _log.info("X polling set to %s", req.enabled)
+    return {"success": True, "enabled": req.enabled}
+
 
 
 def _validate_playbook_override(req: "PlaybookOverrideRequest", manager: Any) -> None:
     if req.playbook != "meta_user_manual":
         return
 
-    selected_playbook = (req.playbook_params or {}).get("selected_playbook")
+    selected_playbook = (req.args or {}).get("selected_playbook")
     if not selected_playbook:
         return
 
@@ -482,25 +499,28 @@ def _validate_playbook_override(req: "PlaybookOverrideRequest", manager: Any) ->
 
     if selected_playbook not in allowed:
         raise HTTPException(status_code=400, detail=f"Invalid selected_playbook: {selected_playbook}")
+
+
+
 class PlaybookOverrideRequest(BaseModel):
     playbook: Optional[str] = None
-    playbook_params: Optional[Dict[str, Any]] = None
+    args: Optional[Dict[str, Any]] = None
 
 
 @router.get("/playbook")
 def get_current_playbook(manager = Depends(get_manager)):
-    """Get current playbook override and parameters."""
+    """Get current playbook override and args."""
     return {
         "playbook": manager.state.current_playbook,
-        "playbook_params": manager.state.playbook_params,
+        "args": manager.state.playbook_args,
     }
 
 
 @router.post("/playbook")
 def set_playbook(req: PlaybookOverrideRequest, manager = Depends(get_manager)):
-    """Set playbook override and parameters."""
-    if req.playbook == "meta_user_manual" and req.playbook_params and "selected_playbook" in req.playbook_params:
-        selected_playbook = req.playbook_params.get("selected_playbook")
+    """Set playbook override and args."""
+    if req.playbook == "meta_user_manual" and req.args and "selected_playbook" in req.args:
+        selected_playbook = req.args.get("selected_playbook")
         if selected_playbook:
             from database.session import SessionLocal
             from database.models import Playbook
@@ -527,13 +547,14 @@ def set_playbook(req: PlaybookOverrideRequest, manager = Depends(get_manager)):
 
     _validate_playbook_override(req, manager)
 
+
     manager.state.current_playbook = req.playbook if req.playbook else None
-    # Update playbook_params if provided, reset if playbook changed to None
-    if req.playbook_params is not None:
-        manager.state.playbook_params = req.playbook_params
+    # Update playbook_args if provided, reset if playbook changed to None
+    if req.args is not None:
+        manager.state.playbook_args = req.args
     elif req.playbook is None:
-        # Reset params when playbook is cleared
-        manager.state.playbook_params = {}
+        # Reset args when playbook is cleared
+        manager.state.playbook_args = {}
 
     # Persist to DB so it survives server restart
     from database.session import SessionLocal
@@ -556,7 +577,7 @@ def set_playbook(req: PlaybookOverrideRequest, manager = Depends(get_manager)):
     return {
         "success": True,
         "playbook": manager.state.current_playbook,
-        "playbook_params": manager.state.playbook_params,
+        "args": manager.state.playbook_args,
     }
 
 class CacheConfigResponse(BaseModel):
