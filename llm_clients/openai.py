@@ -118,6 +118,45 @@ def _extract_json_object_candidate(text: str) -> str:
     return candidate
 
 
+def _validate_required_schema_keys(payload: Dict[str, Any], schema: Dict[str, Any]) -> bool:
+    """Validate that payload satisfies required keys defined in schema.
+
+    This intentionally performs a minimal validation focused on required
+    properties so that structured output can fail fast when mandatory fields are
+    missing, while leaving full schema validation to upstream strict mode when
+    available.
+    """
+
+    def _validate(data: Any, node: Dict[str, Any]) -> bool:
+        node_type = node.get("type")
+
+        if node_type == "object":
+            if not isinstance(data, dict):
+                return False
+            required_keys = node.get("required", [])
+            if any(key not in data for key in required_keys):
+                return False
+
+            properties = node.get("properties", {})
+            for key, child_schema in properties.items():
+                if key in data and isinstance(child_schema, dict):
+                    if not _validate(data[key], child_schema):
+                        return False
+            return True
+
+        if node_type == "array":
+            if not isinstance(data, list):
+                return False
+            item_schema = node.get("items")
+            if isinstance(item_schema, dict):
+                return all(_validate(item, item_schema) for item in data)
+            return True
+
+        return True
+
+    return _validate(payload, schema)
+
+
 class OpenAIClient(LLMClient):
     """Client for OpenAI-compatible chat completions API."""
 
