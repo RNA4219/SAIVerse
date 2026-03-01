@@ -194,6 +194,37 @@ class OpenAIClient(LLMClient):
         # Prepend as a system message so it takes priority
         return [{"role": "system", "content": instruction}] + list(messages)
 
+
+    @staticmethod
+    def _parse_structured_json_text(text: str) -> Optional[Dict[str, Any]]:
+        candidate = (text or "").strip()
+        if not candidate:
+            return None
+
+        if candidate.startswith("```"):
+            for segment in candidate.split("```"):
+                seg = segment.strip()
+                if not seg:
+                    continue
+                lowered = seg.lower()
+                if lowered.startswith("json"):
+                    seg = seg[4:].strip()
+                if seg.startswith("{") and seg.endswith("}"):
+                    candidate = seg
+                    break
+
+        if not candidate.startswith("{"):
+            import re
+            match = re.search(r"\{.*\}", candidate, re.DOTALL)
+            if match:
+                candidate = match.group(0)
+
+        try:
+            parsed = json.loads(candidate)
+        except json.JSONDecodeError:
+            return None
+        return parsed if isinstance(parsed, dict) else None
+
     def _build_request_kwargs(
         self,
         *,
@@ -274,17 +305,50 @@ class OpenAIClient(LLMClient):
         self._store_reasoning_details(reasoning_details)
 
         if response_schema:
-            try:
-                parsed = json.loads(text_body)
+            parsed = self._parse_structured_json_text(text_body)
+            if isinstance(parsed, dict):
+                return parsed
+
+            if not (text_body or "").strip():
+                logging.warning("[openai] Empty structured output; retrying once")
+                try:
+                    retry_resp = openai_runtime.call_with_retry(
+                        lambda: self._create_completion(
+                            model=self.model,
+                            messages=_prepare_openai_messages(
+                                effective_messages,
+                                self.supports_images,
+                                self.max_image_bytes,
+                                self.convert_system_to_user,
+                                self.reasoning_passback_field,
+                            ),
+                            n=1,
+                            **self._build_request_kwargs(response_schema=response_schema, temperature=temperature),
+                        ),
+                        context="API call (structured output retry)",
+                        max_retries=MAX_RETRIES,
+                        initial_backoff=INITIAL_BACKOFF,
+                        should_retry=_should_retry,
+                    )
+                except Exception as e:
+                    logging.exception("OpenAI retry call failed")
+                    raise _convert_to_llm_error(e, "API call (structured output retry)")
+
+                retry_choice = retry_resp.choices[0]
+                retry_text, retry_reasoning_entries, retry_reasoning_details = extract_reasoning_from_message(retry_choice.message)
+                if not retry_text:
+                    retry_text = retry_choice.message.content or ""
+                self._store_reasoning(retry_reasoning_entries)
+                self._store_reasoning_details(retry_reasoning_details)
+
+                parsed = self._parse_structured_json_text(retry_text)
                 if isinstance(parsed, dict):
                     return parsed
-            except json.JSONDecodeError as e:
-                logging.warning("[openai] Failed to parse structured output: %s", e)
-                raise InvalidRequestError(
-                    "Failed to parse JSON response from structured output",
-                    e,
-                    user_message="LLMからの応答を解析できませんでした。再度お試しください。",
-                ) from e
+
+            raise InvalidRequestError(
+                "Failed to parse JSON response from structured output",
+                user_message="LLMからの応答を解析できませんでした。再度お試しください。",
+            )
 
         if not text_body.strip():
             logging.error(
