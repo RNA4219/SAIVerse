@@ -11,14 +11,14 @@
     "reasoning_effort": {
       "type": "enum",
       "options": ["none", "low", "medium", "high"],
-      "default": "high",                   // Thinking はデフォルト high
+      "default": "high",
       "label": "Reasoning Effort",
       "description": "Controls how much thinking time the model spends."
     },
     "verbosity": {
       "type": "enum",
       "options": ["low", "medium", "high"],
-      "default": "high",                   // 思考深める前提で verbose 側に寄せる
+      "default": "high",
       "label": "Verbosity",
       "description": "Controls how long or detailed responses should be.",
       "client_support": ["responses"]
@@ -28,7 +28,7 @@
       "min": 32,
       "max": 8192,
       "step": 1,
-      "default": 6144,                     // 通常版より少し多めにしておく案
+      "default": 6144,
       "label": "Max completion tokens",
       "description": "Upper bound on how many tokens the reply can use."
     }
