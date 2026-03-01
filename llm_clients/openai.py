@@ -303,7 +303,9 @@ class OpenAIClient(LLMClient):
             try:
                 parsed = json.loads(candidate)
                 if isinstance(parsed, dict):
-                    return parsed
+                    if _validate_required_schema_keys(parsed, response_schema):
+                        return parsed
+                    logging.warning("[openai] Structured output missing required keys")
             except json.JSONDecodeError as e:
                 preview = candidate.replace("\n", "\\n")[:300]
                 logging.warning("[openai] Failed to parse structured output: %s (candidate=%r)", e, preview)
@@ -312,6 +314,10 @@ class OpenAIClient(LLMClient):
                     e,
                     user_message="LLMからの応答を解析できませんでした。再度お試しください。",
                 ) from e
+            raise InvalidRequestError(
+                "Failed schema validation for structured output",
+                user_message="LLM応答が期待スキーマを満たしませんでした。再度お試しください。",
+            )
 
         if not text_body.strip():
             logging.error(
