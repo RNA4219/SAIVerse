@@ -458,6 +458,30 @@ def set_developer_mode(req: DeveloperModeRequest, manager=Depends(get_manager)):
     return {"success": True, "enabled": req.enabled}
 
 
+
+
+def _validate_playbook_override(req: "PlaybookOverrideRequest", manager: Any) -> None:
+    if req.playbook != "meta_user_manual":
+        return
+
+    selected_playbook = (req.playbook_params or {}).get("selected_playbook")
+    if not selected_playbook:
+        return
+
+    from database.session import SessionLocal
+    from database.models import Playbook
+
+    db = SessionLocal()
+    try:
+        query = db.query(Playbook).filter(Playbook.router_callable == True)
+        if not getattr(manager.state, "developer_mode", False):
+            query = query.filter(Playbook.dev_only == False)
+        allowed = {pb.name for pb in query.all() if getattr(pb, "name", None)}
+    finally:
+        db.close()
+
+    if selected_playbook not in allowed:
+        raise HTTPException(status_code=400, detail=f"Invalid selected_playbook: {selected_playbook}")
 class PlaybookOverrideRequest(BaseModel):
     playbook: Optional[str] = None
     playbook_params: Optional[Dict[str, Any]] = None
@@ -475,6 +499,8 @@ def get_current_playbook(manager = Depends(get_manager)):
 @router.post("/playbook")
 def set_playbook(req: PlaybookOverrideRequest, manager = Depends(get_manager)):
     """Set playbook override and parameters."""
+    _validate_playbook_override(req, manager)
+
     manager.state.current_playbook = req.playbook if req.playbook else None
     # Update playbook_params if provided, reset if playbook changed to None
     if req.playbook_params is not None:
